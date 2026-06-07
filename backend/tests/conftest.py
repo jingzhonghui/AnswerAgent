@@ -16,9 +16,16 @@ if _app_dir not in sys.path:
 
 @pytest.fixture
 def tmp_data_dir() -> Generator[Path, None, None]:
-    """创建临时数据目录"""
+    """创建临时数据目录（用于对话 JSON 文件）"""
     with tempfile.TemporaryDirectory(prefix="answeragent_test_data_") as d:
         yield Path(d)
+
+
+@pytest.fixture
+def tmp_db_path() -> Generator[str, None, None]:
+    """创建临时 SQLite 数据库文件路径（用于测试对话元数据隔离）"""
+    with tempfile.TemporaryDirectory(prefix="answeragent_test_db_") as d:
+        yield str(Path(d) / "test.db")
 
 
 @pytest.fixture

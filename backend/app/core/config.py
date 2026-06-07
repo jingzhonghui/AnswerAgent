@@ -60,6 +60,14 @@ class Settings(BaseSettings):
             path = backend_root / path
         return path.resolve()
 
+    @property
+    def db_path(self) -> Path:
+        """Get absolute path to the SQLite database file."""
+        backend_root = Path(__file__).parent.parent.parent
+        db_path = backend_root / "data" / "answeragent.db"
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        return db_path
+
     def ensure_directories(self) -> None:
         """Ensure required directories exist."""
         self.get_data_path().mkdir(parents=True, exist_ok=True)

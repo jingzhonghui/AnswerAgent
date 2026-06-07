@@ -44,17 +44,6 @@ class ConversationDetail(BaseModel):
     user_id: Optional[str] = Field(None, description="Owning user ID")
 
 
-class ConversationInStorage(BaseModel):
-    """Internal storage model for conversation JSON files."""
-    id: str = Field(..., description="Conversation UUID")
-    title: str = Field(..., description="Conversation title")
-    kb_names: List[str] = Field(default_factory=list, description="Associated knowledge bases")
-    created_at: datetime = Field(..., description="Creation timestamp")
-    updated_at: datetime = Field(..., description="Last update timestamp")
-    messages: List[Message] = Field(default_factory=list, description="All messages in the conversation")
-    user_id: Optional[str] = Field(None, description="Owning user ID")
-
-
 class CreateConversationRequest(BaseModel):
     """Request to create a new conversation."""
     title: Optional[str] = Field(None, description="Optional initial title")

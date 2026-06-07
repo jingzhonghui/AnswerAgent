@@ -1,7 +1,7 @@
-"""对话 JSON 持久化管理模块
+"""对话管理模块
 
-提供对话的创建、列表、详情、重命名、删除等操作，
-每个对话保存为独立的 JSON 文件。
+对话元数据（ID、标题、用户归属等）存储在 SQLite 数据库中，
+对话内容（消息列表）存储在独立的 JSON 文件中。
 
 安全特性:
 - 所有文件路径 resolve 后校验在 DATA_PATH 内
@@ -10,6 +10,7 @@
 """
 import json
 import os
+import sqlite3
 import tempfile
 import uuid
 from datetime import datetime
@@ -20,9 +21,8 @@ from pydantic import ValidationError
 
 from core.config import settings
 from models.schemas import (
-    ConversationInStorage,
-    ConversationSummary,
     ConversationDetail,
+    ConversationSummary,
     Message,
 )
 
@@ -40,18 +40,102 @@ class ConversationNotFoundError(Exception):
 class ChatManager:
     """对话管理器
 
-    负责对话的 CRUD 操作和 JSON 文件持久化。
+    对话元数据存储在 SQLite，消息内容存储在 JSON 文件。
     """
 
-    def __init__(self, data_path: Optional[str] = None):
+    def __init__(self, data_path: Optional[str] = None, db_path: Optional[str] = None):
         """初始化对话管理器
 
         Args:
-            data_path: 对话数据存储目录，默认使用 settings.DATA_PATH
+            data_path: 对话 JSON 文件存储目录，默认使用 settings.get_data_path()
+            db_path: SQLite 数据库文件路径，默认使用 settings.db_path
         """
         self.data_path = Path(data_path or settings.get_data_path()).resolve()
-        # 确保数据目录存在
         self.data_path.mkdir(parents=True, exist_ok=True)
+
+        self._db_path = str(db_path or settings.db_path)
+        self._ensure_conversations_table()
+        self.sync_from_json_files()
+
+    # ==================== SQLite 连接 ====================
+
+    def _ensure_conversations_table(self) -> None:
+        """确保对话元数据表存在"""
+        conn = sqlite3.connect(self._db_path)
+        try:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS conversations (
+                    id          TEXT PRIMARY KEY,
+                    title       TEXT NOT NULL DEFAULT '新对话',
+                    user_id     TEXT,
+                    created_at  TEXT NOT NULL,
+                    updated_at  TEXT NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id)
+                )
+            """)
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id)"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_conversations_updated_at ON conversations(updated_at)"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def _get_db(self) -> sqlite3.Connection:
+        """获取同步 SQLite 连接"""
+        conn = sqlite3.connect(self._db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    # ==================== 旧数据迁移 ====================
+
+    def sync_from_json_files(self) -> int:
+        """将磁盘上无对应 DB 记录的 JSON 文件同步到数据库
+
+        用于迁移已有的历史对话数据。
+
+        Returns:
+            int: 同步的对话数量
+        """
+        count = 0
+        conn = self._get_db()
+        try:
+            for json_file in self.data_path.glob("*.json"):
+                conv_id = json_file.stem
+                cursor = conn.execute(
+                    "SELECT 1 FROM conversations WHERE id = ?", (conv_id,)
+                )
+                if cursor.fetchone() is not None:
+                    continue  # 已有 DB 记录，跳过
+
+                try:
+                    with open(json_file, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                except (json.JSONDecodeError, KeyError):
+                    continue  # 跳过损坏文件
+
+                conn.execute(
+                    "INSERT INTO conversations (id, title, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                    (
+                        data.get('id', conv_id),
+                        data.get('title', '新对话'),
+                        data.get('user_id'),
+                        data.get('created_at', datetime.now().isoformat()),
+                        data.get('updated_at', datetime.now().isoformat()),
+                    ),
+                )
+                count += 1
+
+            if count > 0:
+                conn.commit()
+        finally:
+            conn.close()
+
+        return count
+
+    # ==================== 文件路径 & 安全校验 ====================
 
     def _validate_conversation_id(self, conversation_id: str) -> None:
         """验证对话 ID 格式
@@ -62,7 +146,6 @@ class ChatManager:
         Raises:
             ValueError: ID 格式无效
         """
-        # 只允许 UUID 格式的 ID：550e8400-e29b-41d4-a716-446655440000
         try:
             uuid.UUID(conversation_id)
         except (ValueError, TypeError):
@@ -82,11 +165,8 @@ class ChatManager:
         """
         self._validate_conversation_id(conversation_id)
 
-        # 构建文件路径
         file_path = (self.data_path / f"{conversation_id}.json").resolve()
 
-        # 安全检查：确保解析后的路径在 DATA_PATH 内
-        # 防止路径穿越攻击（如 conversation_id = "../../../etc/passwd"）
         if not str(file_path).startswith(str(self.data_path)):
             raise PathSecurityError(
                 f"Path traversal detected: {conversation_id} resolves outside DATA_PATH"
@@ -94,44 +174,35 @@ class ChatManager:
 
         return file_path
 
+    # ==================== JSON 文件读写（消息内容） ====================
+
     def _atomic_write_json(self, file_path: Path, data: dict) -> None:
-        """原子写入 JSON 文件
-
-        先写入临时文件，再重命名，避免写入过程中断导致文件损坏。
-
-        Args:
-            file_path: 目标文件路径
-            data: 要写入的数据
-        """
-        # 在同一目录创建临时文件，确保原子重命名有效
+        """原子写入 JSON 文件"""
         temp_fd, temp_path = tempfile.mkstemp(
-            dir=file_path.parent,
-            prefix=f".{file_path.stem}_"
+            dir=file_path.parent, prefix=f".{file_path.stem}_"
         )
         try:
             with os.fdopen(temp_fd, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=2, default=str)
-            # 原子重命名
             os.replace(temp_path, file_path)
         except Exception:
-            # 清理临时文件
             try:
                 os.unlink(temp_path)
             except FileNotFoundError:
                 pass
             raise
 
-    def _load_conversation(self, conversation_id: str) -> ConversationInStorage:
-        """加载对话数据
+    def _load_conversation(self, conversation_id: str) -> ConversationDetail:
+        """从 JSON 文件加载对话（含完整消息内容）
 
         Args:
             conversation_id: 对话 ID
 
         Returns:
-            ConversationInStorage: 对话数据
+            ConversationDetail: 包含完整消息的对话数据
 
         Raises:
-            ConversationNotFoundError: 对话不存在
+            ConversationNotFoundError: 对话不存在或文件损坏
         """
         file_path = self._get_conversation_path(conversation_id)
 
@@ -156,60 +227,45 @@ class ChatManager:
                 msg['created_at'] = datetime.fromisoformat(msg['created_at'])
 
         try:
-            return ConversationInStorage(**data)
+            return ConversationDetail(**data)
         except ValidationError as e:
             raise ConversationNotFoundError(
                 f"Conversation data corrupted (schema validation error): {conversation_id}"
             ) from e
 
-    def _save_conversation(self, conversation: ConversationInStorage) -> None:
-        """保存对话数据
-
-        Args:
-            conversation: 对话数据
-        """
+    def _save_conversation(self, conversation: ConversationDetail) -> None:
+        """将对话完整保存到 JSON 文件（含消息内容）"""
         file_path = self._get_conversation_path(conversation.id)
         data = conversation.model_dump()
         self._atomic_write_json(file_path, data)
 
+    # ==================== 对话 CRUD ====================
+
     def list_conversations(self) -> List[ConversationSummary]:
-        """获取对话列表，按 updated_at 倒序排列
+        """获取所有对话列表（无用户过滤），按 updated_at 倒序
 
         Returns:
             List[ConversationSummary]: 对话列表
         """
-        conversations = []
-
-        # 遍历所有 JSON 文件
-        for json_file in self.data_path.glob("*.json"):
-            try:
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-
-                # 解析日期
-                updated_at = data.get('updated_at', '')
-                if updated_at:
-                    updated_at = datetime.fromisoformat(updated_at)
-
-                conversations.append(ConversationSummary(
-                    id=data['id'],
-                    title=data.get('title', '未命名对话'),
-                    kb_names=data.get('kb_names', []),
-                    updated_at=updated_at or datetime.now(),
-                    message_count=len(data.get('messages', [])),
-                ))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                # 跳过损坏的文件
-                continue
-
-        # 按 updated_at 倒序排列
-        conversations.sort(key=lambda x: x.updated_at, reverse=True)
-        return conversations
+        conn = self._get_db()
+        try:
+            cursor = conn.execute(
+                "SELECT id, title, updated_at FROM conversations ORDER BY updated_at DESC"
+            )
+            return [
+                ConversationSummary(
+                    id=row['id'],
+                    title=row['title'],
+                    updated_at=datetime.fromisoformat(row['updated_at']),
+                    message_count=None,
+                )
+                for row in cursor.fetchall()
+            ]
+        finally:
+            conn.close()
 
     def list_conversations_by_user(self, user_id: str) -> List[ConversationSummary]:
-        """获取指定用户的对话列表，按 updated_at 倒序排列
-
-        只返回 user_id 与当前用户匹配的对话（严格多用户隔离）。
+        """获取指定用户的对话列表，按 updated_at 倒序
 
         Args:
             user_id: 用户 ID
@@ -217,63 +273,70 @@ class ChatManager:
         Returns:
             List[ConversationSummary]: 对话列表
         """
-        conversations = []
-
-        for json_file in self.data_path.glob("*.json"):
-            try:
-                with open(json_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-
-                # 严格过滤：只返回 user_id 完全匹配的对话
-                conv_user_id = data.get('user_id')
-                if conv_user_id != user_id:
-                    continue
-
-                updated_at = data.get('updated_at', '')
-                if updated_at:
-                    updated_at = datetime.fromisoformat(updated_at)
-
-                conversations.append(ConversationSummary(
-                    id=data['id'],
-                    title=data.get('title', '未命名对话'),
-                    kb_names=data.get('kb_names', []),
-                    updated_at=updated_at or datetime.now(),
-                    message_count=len(data.get('messages', [])),
-                ))
-            except (json.JSONDecodeError, KeyError, ValueError):
-                continue
-
-        conversations.sort(key=lambda x: x.updated_at, reverse=True)
-        return conversations
+        conn = self._get_db()
+        try:
+            cursor = conn.execute(
+                "SELECT id, title, updated_at FROM conversations WHERE user_id = ? ORDER BY updated_at DESC",
+                (user_id,),
+            )
+            return [
+                ConversationSummary(
+                    id=row['id'],
+                    title=row['title'],
+                    updated_at=datetime.fromisoformat(row['updated_at']),
+                    message_count=None,
+                )
+                for row in cursor.fetchall()
+            ]
+        finally:
+            conn.close()
 
     def create_conversation(self, title: str = "新对话", user_id: Optional[str] = None) -> str:
         """创建新对话
 
+        先在 SQLite 插入元数据，再创建空的 JSON 消息文件。
+        如果 DB 插入失败，不会创建 JSON 文件（原子性保证）。
+
         Args:
             title: 对话标题
-            user_id: 所属用户 ID（可选，用于多用户隔离）
+            user_id: 所属用户 ID
 
         Returns:
             str: 新创建对话的 ID
         """
         conversation_id = str(uuid.uuid4())
-        now = datetime.now()
+        now = datetime.now().isoformat()
 
-        conversation = ConversationInStorage(
+        conn = self._get_db()
+        try:
+            conn.execute(
+                "INSERT INTO conversations (id, title, user_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+                (conversation_id, title, user_id, now, now),
+            )
+            conn.commit()
+        except Exception:
+            conn.close()
+            raise
+        conn.close()
+
+        # 创建空的 JSON 消息文件
+        conversation = ConversationDetail(
             id=conversation_id,
             title=title,
-            kb_names=[],
-            created_at=now,
-            updated_at=now,
+            created_at=datetime.fromisoformat(now),
+            updated_at=datetime.fromisoformat(now),
             messages=[],
             user_id=user_id,
         )
-
         self._save_conversation(conversation)
+
         return conversation_id
 
     def get_conversation(self, conversation_id: str) -> ConversationDetail:
-        """获取对话详情
+        """获取对话详情（含完整消息内容）
+
+        元数据（标题、时间）从 SQLite 获取，消息内容从 JSON 文件加载。
+        SQLite 是元数据的权威来源。
 
         Args:
             conversation_id: 对话 ID
@@ -284,20 +347,44 @@ class ChatManager:
         Raises:
             ConversationNotFoundError: 对话不存在
         """
+        self._get_conversation_path(conversation_id)  # 只做格式校验
+
+        # 从 DB 获取元数据
+        conn = self._get_db()
+        try:
+            cursor = conn.execute(
+                "SELECT id, title, user_id, created_at, updated_at FROM conversations WHERE id = ?",
+                (conversation_id,),
+            )
+            row = cursor.fetchone()
+            if row is None:
+                raise ConversationNotFoundError(
+                    f"Conversation not found: {conversation_id}"
+                )
+            db_meta = {
+                "title": row["title"],
+                "user_id": row["user_id"],
+                "created_at": datetime.fromisoformat(row["created_at"]),
+                "updated_at": datetime.fromisoformat(row["updated_at"]),
+            }
+        finally:
+            conn.close()
+
+        # 从 JSON 加载消息内容
         conv = self._load_conversation(conversation_id)
 
-        return ConversationDetail(
-            id=conv.id,
-            title=conv.title,
-            kb_names=conv.kb_names,
-            created_at=conv.created_at,
-            updated_at=conv.updated_at,
-            messages=conv.messages,
-            user_id=conv.user_id,
-        )
+        # 以 DB 元数据覆盖 JSON 中的值（DB 是元数据权威来源）
+        conv.title = db_meta["title"]
+        conv.user_id = db_meta["user_id"]
+        conv.created_at = db_meta["created_at"]
+        conv.updated_at = db_meta["updated_at"]
+
+        return conv
 
     def delete_conversation(self, conversation_id: str) -> None:
         """删除对话
+
+        同步删除 DB 记录和 JSON 文件。
 
         Args:
             conversation_id: 对话 ID
@@ -307,13 +394,26 @@ class ChatManager:
         """
         file_path = self._get_conversation_path(conversation_id)
 
-        if not file_path.exists():
-            raise ConversationNotFoundError(f"Conversation not found: {conversation_id}")
+        # 删除 DB 记录
+        conn = self._get_db()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM conversations WHERE id = ?", (conversation_id,)
+            )
+            if cursor.rowcount == 0:
+                raise ConversationNotFoundError(
+                    f"Conversation not found: {conversation_id}"
+                )
+            conn.commit()
+        finally:
+            conn.close()
 
-        file_path.unlink()
+        # 删除 JSON 文件（如果存在）
+        if file_path.exists():
+            file_path.unlink()
 
     def rename_conversation(self, conversation_id: str, title: str) -> None:
-        """重命名对话
+        """重命名对话（仅更新 DB，不碰 JSON 文件）
 
         Args:
             conversation_id: 对话 ID
@@ -322,13 +422,26 @@ class ChatManager:
         Raises:
             ConversationNotFoundError: 对话不存在
         """
-        conversation = self._load_conversation(conversation_id)
-        conversation.title = title
-        conversation.updated_at = datetime.now()
-        self._save_conversation(conversation)
+        self._get_conversation_path(conversation_id)  # 只做格式校验
+
+        conn = self._get_db()
+        try:
+            cursor = conn.execute(
+                "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+                (title, datetime.now().isoformat(), conversation_id),
+            )
+            if cursor.rowcount == 0:
+                raise ConversationNotFoundError(
+                    f"Conversation not found: {conversation_id}"
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+    # ==================== 消息操作 ====================
 
     def append_user_message(self, conversation_id: str, content: str) -> None:
-        """追加用户消息
+        """追加用户消息（仅操作 JSON 文件）
 
         Args:
             conversation_id: 对话 ID
@@ -350,6 +463,9 @@ class ChatManager:
         conversation.updated_at = datetime.now()
         self._save_conversation(conversation)
 
+        # 同步更新 DB 中的 updated_at
+        self._update_timestamp(conversation_id)
+
     def append_assistant_message(
         self,
         conversation_id: str,
@@ -358,6 +474,8 @@ class ChatManager:
         files_used: Optional[List[str]] = None,
     ) -> None:
         """追加助手消息
+
+        如果 kb_names 有更新，也同步更新对话的关联知识库。
 
         Args:
             conversation_id: 对话 ID
@@ -382,7 +500,6 @@ class ChatManager:
             from models.schemas import FileSelection
             files_used_objects = []
             for file_path in files_used:
-                # 尝试解析知识库名称和文件路径
                 parts = file_path.split('/', 1)
                 kb_name = parts[0] if len(parts) > 1 else ""
                 rel_path = parts[1] if len(parts) > 1 else file_path
@@ -405,8 +522,11 @@ class ChatManager:
         conversation.updated_at = datetime.now()
         self._save_conversation(conversation)
 
+        # 同步更新 DB 中的 updated_at
+        self._update_timestamp(conversation_id)
+
     def get_recent_history(self, conversation_id: str, window: int = 10) -> List[dict]:
-        """获取最近 N 轮对话历史
+        """获取最近 N 轮对话历史（仅从 JSON 读取）
 
         Args:
             conversation_id: 对话 ID
@@ -420,7 +540,6 @@ class ChatManager:
         """
         conversation = self._load_conversation(conversation_id)
 
-        # 取最后 window*2 条消息（问答成对）
         messages = conversation.messages[-window * 2:] if conversation.messages else []
 
         return [
@@ -430,6 +549,20 @@ class ChatManager:
             }
             for msg in messages
         ]
+
+    # ==================== 内部辅助 ====================
+
+    def _update_timestamp(self, conversation_id: str) -> None:
+        """同步更新 DB 中的 updated_at 时间戳"""
+        conn = self._get_db()
+        try:
+            conn.execute(
+                "UPDATE conversations SET updated_at = ? WHERE id = ?",
+                (datetime.now().isoformat(), conversation_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 # 全局对话管理器实例

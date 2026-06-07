@@ -217,6 +217,19 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
   }
 
+  // 重置所有状态（切换用户时由 authStore.logout() 调用）
+  function $reset() {
+    conversations.value = []
+    activeConversationId.value = null
+    activeMessages.value = []
+    isLoading.value = false
+    isConversationLoading.value = false
+    isStreaming.value = false
+    matchedKbs.value = []
+    selectedFiles.value = []
+    abortController = null
+  }
+
   return {
     // 状态
     conversations,
@@ -238,5 +251,7 @@ export const useChatStore = defineStore('chat', () => {
     setActiveConversation,
     sendMessage,
     stopStreaming,
+    // 重置
+    $reset,
   }
 })

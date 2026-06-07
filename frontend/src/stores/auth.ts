@@ -17,10 +17,20 @@ export const useAuthStore = defineStore('auth', () => {
     localStorage.setItem('access_token', accessToken)
   }
 
-  function logout() {
+  async function logout() {
     token.value = null
     user.value = null
     localStorage.removeItem('access_token')
+
+    // 重置聊天状态，避免切换用户时显示旧数据
+    try {
+      const { useChatStore } = await import('@/stores/chat')
+      const chatStore = useChatStore()
+      chatStore.$reset()
+    } catch {
+      // Chat store 可能尚未初始化
+    }
+
     router.push('/login')
   }
 
