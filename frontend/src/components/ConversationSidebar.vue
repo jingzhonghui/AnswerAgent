@@ -1,58 +1,70 @@
 <script setup lang="ts">
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
 
-// 重命名相关状态
 const editingId = ref<string | null>(null)
 const editingTitle = ref('')
 const editInputRef = ref<HTMLInputElement | null>(null)
+const hoveredId = ref<string | null>(null)
 
-// 确认删除相关状态
-const showDeleteConfirm = ref(false)
-const deleteTargetId = ref<string | null>(null)
+// 按时间分组对话
+const groupedConversations = computed(() => {
+  const groups: Record<string, typeof chatStore.conversations> = {}
 
-// 右键菜单相关状态
-const showContextMenu = ref(false)
-const contextMenuX = ref(0)
-const contextMenuY = ref(0)
-const contextMenuTargetId = ref<string | null>(null)
+  chatStore.conversations.forEach(conv => {
+    const date = new Date(conv.updated_at)
+    const now = new Date()
+    const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
 
-// 加载对话列表
+    let groupName: string
+    if (conv.isPinned) groupName = '置顶'
+    else if (diffDays === 0) groupName = '今天'
+    else if (diffDays === 1) groupName = '昨天'
+    else if (diffDays < 7) groupName = '7天内'
+    else if (diffDays < 30) groupName = '30天内'
+    else groupName = '更早'
+
+    if (!groups[groupName]) groups[groupName] = []
+    groups[groupName].push(conv)
+  })
+
+  // 排序
+  const order = ['置顶', '今天', '昨天', '7天内', '30天内', '更早']
+  const sortedGroups: Record<string, typeof chatStore.conversations> = {}
+  order.forEach(name => {
+    if (groups[name] && groups[name].length > 0) {
+      sortedGroups[name] = groups[name]
+    }
+  })
+
+  return sortedGroups
+})
+
 onMounted(async () => {
   await chatStore.loadConversations()
 })
 
-// 新建对话
 async function handleCreateConversation() {
   await chatStore.createConversation()
 }
 
-// 选择对话
 async function handleSelectConversation(id: string) {
-  // 如果正在编辑，先结束编辑
-  if (editingId.value) {
-    finishEditing()
-  }
+  if (editingId.value) return
   await chatStore.selectConversation(id)
 }
 
-// 开始重命名
 function startRename(event: Event, id: string, title: string) {
   event.stopPropagation()
   editingId.value = id
   editingTitle.value = title
-  // 关闭右键菜单
-  hideContextMenu()
-  // 等待 DOM 更新后聚焦输入框
   nextTick(() => {
     editInputRef.value?.focus()
     editInputRef.value?.select()
   })
 }
 
-// 结束重命名
 async function finishEditing() {
   if (editingId.value && editingTitle.value.trim()) {
     const trimmedTitle = editingTitle.value.trim()
@@ -64,160 +76,115 @@ async function finishEditing() {
   editingTitle.value = ''
 }
 
-// 取消编辑
 function cancelEditing() {
   editingId.value = null
   editingTitle.value = ''
 }
 
-// 处理输入框键盘事件
 function handleEditKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter') {
-    finishEditing()
-  } else if (event.key === 'Escape') {
-    cancelEditing()
+  if (event.key === 'Enter') finishEditing()
+  else if (event.key === 'Escape') cancelEditing()
+}
+
+async function handleDelete(event: Event, id: string) {
+  event.stopPropagation()
+  if (confirm('确定要删除这个对话吗？')) {
+    await chatStore.deleteConversation(id)
   }
-}
-
-// 确认删除
-function confirmDelete(id: string) {
-  deleteTargetId.value = id
-  showDeleteConfirm.value = true
-  hideContextMenu()
-}
-
-// 执行删除
-async function executeDelete() {
-  if (deleteTargetId.value) {
-    await chatStore.deleteConversation(deleteTargetId.value)
-  }
-  showDeleteConfirm.value = false
-  deleteTargetId.value = null
-}
-
-// 取消删除
-function cancelDelete() {
-  showDeleteConfirm.value = false
-  deleteTargetId.value = null
-}
-
-// 显示右键菜单
-function showContextMenuForItem(event: MouseEvent, id: string) {
-  event.preventDefault()
-  contextMenuTargetId.value = id
-  contextMenuX.value = event.clientX
-  contextMenuY.value = event.clientY
-  showContextMenu.value = true
-}
-
-// 隐藏右键菜单
-function hideContextMenu() {
-  showContextMenu.value = false
-  contextMenuTargetId.value = null
-}
-
-// 点击其他地方隐藏菜单
-function handleDocumentClick() {
-  hideContextMenu()
-}
-
-// 获取对话标题
-function getConversationTitle(id: string): string {
-  const conv = chatStore.conversations.find(c => c.id === id)
-  return conv?.title || ''
 }
 </script>
 
 <template>
-  <aside class="sidebar" @click="hideContextMenu">
-    <!-- 头部 -->
+  <aside class="sidebar">
+    <!-- Logo -->
     <div class="sidebar-header">
-      <h1 class="logo">Answer Agent</h1>
+      <div class="logo">
+        <span class="logo-icon">◆</span>
+        <span class="logo-text">Answer Agent</span>
+      </div>
     </div>
 
     <!-- 新建对话按钮 -->
     <div class="sidebar-actions">
       <button class="new-chat-btn" @click="handleCreateConversation">
-        <span class="plus-icon">+</span>
-        <span>新建对话</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="10"/>
+          <path d="M12 8v8M8 12h8"/>
+        </svg>
+        <span>开启新对话</span>
       </button>
     </div>
 
     <!-- 对话列表 -->
-    <div class="conversation-list" @click="handleDocumentClick">
-      <div
-        v-for="conv in chatStore.conversations"
-        :key="conv.id"
-        class="conversation-item"
-        :class="{ active: conv.id === chatStore.activeConversationId }"
-        @click="handleSelectConversation(conv.id)"
-        @contextmenu="showContextMenuForItem($event, conv.id)"
-      >
-        <!-- 编辑模式 -->
-        <template v-if="editingId === conv.id">
-          <input
-            ref="editInputRef"
-            v-model="editingTitle"
-            class="edit-input"
-            @blur="finishEditing"
-            @keydown="handleEditKeydown"
-            @click.stop
-          />
-        </template>
-        <!-- 显示模式 -->
-        <template v-else>
-          <span class="conversation-title">{{ conv.title }}</span>
-          <button
-            class="delete-btn"
-            @click.stop="confirmDelete(conv.id)"
-            title="删除对话"
-          >
-            ×
-          </button>
-        </template>
-      </div>
-
-      <!-- 空状态 -->
+    <div class="conversation-list">
       <div v-if="chatStore.conversations.length === 0" class="empty-state">
-        暂无对话，点击上方按钮新建
+        暂无对话
       </div>
 
-      <!-- 加载中 -->
-      <div v-if="chatStore.isLoading" class="loading-state">
-        加载中...
-      </div>
-    </div>
-
-    <!-- 右键菜单 -->
-    <div
-      v-if="showContextMenu"
-      class="context-menu"
-      :style="{ left: contextMenuX + 'px', top: contextMenuY + 'px' }"
-      @click.stop
-    >
-      <div
-        class="context-menu-item"
-        @click="startRename($event, contextMenuTargetId!, getConversationTitle(contextMenuTargetId!))"
-      >
-        重命名
-      </div>
-      <div
-        class="context-menu-item delete"
-        @click="confirmDelete(contextMenuTargetId!)"
-      >
-        删除
-      </div>
-    </div>
-
-    <!-- 删除确认对话框 -->
-    <div v-if="showDeleteConfirm" class="modal-overlay" @click="cancelDelete">
-      <div class="modal-content" @click.stop>
-        <h3>确认删除</h3>
-        <p>确定要删除这个对话吗？此操作无法撤销。</p>
-        <div class="modal-actions">
-          <button class="btn-cancel" @click="cancelDelete">取消</button>
-          <button class="btn-confirm" @click="executeDelete">删除</button>
+      <template v-else>
+        <div
+          v-for="(convs, groupName) in groupedConversations"
+          :key="groupName"
+          class="conversation-group"
+        >
+          <div class="group-label">{{ groupName }}</div>
+          <div
+            v-for="conv in convs"
+            :key="conv.id"
+            class="conversation-item"
+            :class="{ active: conv.id === chatStore.activeConversationId }"
+            @click="handleSelectConversation(conv.id)"
+            @mouseenter="hoveredId = conv.id"
+            @mouseleave="hoveredId = null"
+          >
+            <template v-if="editingId === conv.id">
+              <input
+                ref="editInputRef"
+                v-model="editingTitle"
+                class="edit-input"
+                @blur="finishEditing"
+                @keydown="handleEditKeydown"
+                @click.stop
+              />
+            </template>
+            <template v-else>
+              <span class="conversation-title">{{ conv.title }}</span>
+              <div
+                v-if="hoveredId === conv.id || conv.id === chatStore.activeConversationId"
+                class="conversation-actions"
+                @click.stop
+              >
+                <button
+                  class="action-btn"
+                  @click="startRename($event, conv.id, conv.title)"
+                  title="重命名"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/>
+                    <path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                  </svg>
+                </button>
+                <button
+                  class="action-btn delete"
+                  @click="handleDelete($event, conv.id)"
+                  title="删除"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M3 6h18M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/>
+                  </svg>
+                </button>
+              </div>
+            </template>
+          </div>
         </div>
+      </template>
+    </div>
+
+    <!-- 底部用户信息 -->
+    <div class="sidebar-footer">
+      <div class="user-info">
+        <div class="user-avatar">U</div>
+        <span class="user-name">用户</span>
       </div>
     </div>
   </aside>
@@ -225,41 +192,53 @@ function getConversationTitle(id: string): string {
 
 <style scoped>
 .sidebar {
-  width: 260px;
+  width: 280px;
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border-color);
   display: flex;
   flex-direction: column;
-  position: relative;
+  flex-shrink: 0;
 }
 
 .sidebar-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 16px 20px;
 }
 
 .logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 18px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0;
+}
+
+.logo-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-color);
+  color: white;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
 }
 
 .sidebar-actions {
-  padding: 12px;
-  border-bottom: 1px solid var(--border-color);
+  padding: 0 16px 16px;
 }
 
 .new-chat-btn {
   width: 100%;
-  padding: 10px 12px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  background: var(--bg-primary);
+  gap: 8px;
+  background: transparent;
   border: 1px solid var(--border-color);
-  border-radius: 6px;
+  border-radius: var(--radius-full);
   color: var(--text-primary);
   font-size: 14px;
   cursor: pointer;
@@ -267,19 +246,38 @@ function getConversationTitle(id: string): string {
 }
 
 .new-chat-btn:hover {
-  background: var(--hover-bg);
+  background: var(--bg-hover);
   border-color: var(--accent-color);
+  color: var(--accent-color);
 }
 
-.plus-icon {
-  font-size: 16px;
-  font-weight: 500;
+.new-chat-btn svg {
+  width: 16px;
+  height: 16px;
 }
 
 .conversation-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 0 12px;
+}
+
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+.conversation-group {
+  margin-bottom: 16px;
+}
+
+.group-label {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-weight: 500;
 }
 
 .conversation-item {
@@ -288,33 +286,22 @@ function getConversationTitle(id: string): string {
   justify-content: space-between;
   padding: 10px 12px;
   margin-bottom: 4px;
-  border-radius: 6px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-secondary);
   font-size: 14px;
-  transition: background 0.2s;
+  transition: all 0.15s;
+  position: relative;
 }
 
 .conversation-item:hover {
-  background: var(--hover-bg);
-}
-
-.conversation-item:hover .delete-btn {
-  opacity: 1;
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 
 .conversation-item.active {
-  background: var(--accent-color);
-  color: white;
-}
-
-.conversation-item.active .delete-btn {
-  color: white;
-  opacity: 0.7;
-}
-
-.conversation-item.active .delete-btn:hover {
-  opacity: 1;
+  background: var(--bg-active);
+  color: var(--text-primary);
 }
 
 .conversation-title {
@@ -322,147 +309,89 @@ function getConversationTitle(id: string): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  padding-right: 8px;
 }
 
 .edit-input {
   flex: 1;
-  padding: 4px 6px;
+  padding: 6px 10px;
   border: 1px solid var(--accent-color);
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
   font-size: 14px;
   outline: none;
 }
 
-.delete-btn {
-  width: 20px;
-  height: 20px;
+.conversation-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.action-btn {
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: transparent;
   border: none;
-  color: var(--text-secondary);
-  font-size: 18px;
+  color: var(--text-tertiary);
   cursor: pointer;
-  opacity: 0;
-  transition: opacity 0.2s;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
 }
 
-.delete-btn:hover {
-  background: rgba(255, 255, 255, 0.1);
-}
-
-.empty-state,
-.loading-state {
-  padding: 24px;
-  text-align: center;
-  color: var(--text-secondary);
-  font-size: 13px;
-}
-
-/* 右键菜单 */
-.context-menu {
-  position: fixed;
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 6px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-  z-index: 1000;
-  min-width: 120px;
-  overflow: hidden;
-}
-
-.context-menu-item {
-  padding: 10px 16px;
-  font-size: 14px;
+.action-btn:hover {
+  background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+.action-btn.delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.action-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.sidebar-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--border-color);
+}
+
+.user-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
   cursor: pointer;
   transition: background 0.2s;
 }
 
-.context-menu-item:hover {
-  background: var(--hover-bg);
+.user-info:hover {
+  background: var(--bg-hover);
 }
 
-.context-menu-item.delete {
-  color: #e74c3c;
-}
-
-.context-menu-item.delete:hover {
-  background: rgba(231, 76, 60, 0.1);
-}
-
-/* 删除确认对话框 */
-.modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
+.user-avatar {
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 2000;
-}
-
-.modal-content {
-  background: var(--bg-primary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  padding: 24px;
-  min-width: 300px;
-  max-width: 90vw;
-}
-
-.modal-content h3 {
-  margin: 0 0 12px 0;
-  font-size: 16px;
-  color: var(--text-primary);
-}
-
-.modal-content p {
-  margin: 0 0 20px 0;
-  font-size: 14px;
-  color: var(--text-secondary);
-}
-
-.modal-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-}
-
-.btn-cancel,
-.btn-confirm {
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-size: 14px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.btn-cancel {
-  background: transparent;
-  border: 1px solid var(--border-color);
-  color: var(--text-secondary);
-}
-
-.btn-cancel:hover {
-  background: var(--hover-bg);
-}
-
-.btn-confirm {
-  background: #e74c3c;
-  border: 1px solid #e74c3c;
+  background: var(--accent-color);
   color: white;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  font-weight: 500;
 }
 
-.btn-confirm:hover {
-  background: #c0392b;
-  border-color: #c0392b;
+.user-name {
+  font-size: 14px;
+  color: var(--text-primary);
 }
 </style>

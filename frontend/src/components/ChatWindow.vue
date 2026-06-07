@@ -3,7 +3,6 @@ import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
 
-// 格式化时间
 function formatTime(timestamp: string): string {
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', {
@@ -12,21 +11,15 @@ function formatTime(timestamp: string): string {
   })
 }
 
-// 格式化日期
 function formatDate(timestamp: string): string {
   const date = new Date(timestamp)
   const now = new Date()
   const isToday = date.toDateString() === now.toDateString()
-
-  if (isToday) {
-    return '今天'
-  }
-
   const yesterday = new Date(now)
   yesterday.setDate(yesterday.getDate() - 1)
-  if (date.toDateString() === yesterday.toDateString()) {
-    return '昨天'
-  }
+
+  if (isToday) return '今天'
+  if (date.toDateString() === yesterday.toDateString()) return '昨天'
 
   return date.toLocaleDateString('zh-CN', {
     month: 'short',
@@ -39,85 +32,55 @@ function formatDate(timestamp: string): string {
   <main class="chat-window">
     <!-- 空状态 -->
     <div v-if="!chatStore.hasActiveConversation()" class="empty-state">
-      <div class="welcome-content">
-        <h2>欢迎使用 Answer Agent</h2>
-        <p>基于本地知识库的 AI 问答助手</p>
-        <div class="hints">
-          <div class="hint-item">
-            <span class="hint-icon">💬</span>
-            <span>在左侧选择或新建对话开始交流</span>
-          </div>
-          <div class="hint-item">
-            <span class="hint-icon">📚</span>
-            <span>系统会自动匹配相关知识库</span>
-          </div>
-          <div class="hint-item">
-            <span class="hint-icon">⚡</span>
-            <span>支持流式输出，实时查看回答</span>
-          </div>
+      <div class="welcome">
+        <div class="welcome-logo">
+          <span>◆</span>
         </div>
+        <h1>Answer Agent</h1>
+        <p>基于本地知识库的 AI 问答助手</p>
       </div>
     </div>
 
     <!-- 加载中 -->
     <div v-else-if="chatStore.isConversationLoading" class="loading-state">
-      <div class="loading-spinner"></div>
-      <span>加载对话中...</span>
+      <div class="spinner"></div>
     </div>
 
     <!-- 消息列表 -->
     <div v-else class="messages-container">
-      <div class="messages-header">
-        <h2 class="conversation-title">
-          {{ chatStore.activeConversation()?.title || '未命名对话' }}
-        </h2>
+      <div v-if="chatStore.activeMessages.length === 0" class="no-messages">
+        <p>发送消息开始对话</p>
       </div>
 
-      <div class="messages-list">
-        <template v-if="chatStore.activeMessages.length === 0">
-          <div class="no-messages">
-            <p>暂无消息，开始发送第一条消息吧</p>
-          </div>
-        </template>
-
-        <template v-else>
+      <template v-else>
+        <div
+          v-for="(msg, index) in chatStore.activeMessages"
+          :key="index"
+          class="message-row"
+          :class="msg.role"
+        >
+          <!-- 日期分隔 -->
           <div
-            v-for="(msg, index) in chatStore.activeMessages"
-            :key="index"
-            class="message-wrapper"
-            :class="msg.role"
+            v-if="index === 0 || formatDate(msg.timestamp) !== formatDate(chatStore.activeMessages[index - 1].timestamp)"
+            class="date-divider"
           >
-            <!-- 日期分隔线 -->
-            <div
-              v-if="index === 0 || formatDate(msg.timestamp) !== formatDate(chatStore.activeMessages[index - 1].timestamp)"
-              class="date-divider"
-            >
-              <span>{{ formatDate(msg.timestamp) }}</span>
-            </div>
+            <span>{{ formatDate(msg.timestamp) }}</span>
+          </div>
 
-            <div class="message">
-              <div class="message-header">
-                <span class="message-role">
-                  {{ msg.role === 'user' ? '你' : '助手' }}
-                </span>
+          <div class="message-content-wrapper">
+            <div class="message-avatar">
+              <span v-if="msg.role === 'user'">U</span>
+              <span v-else>◆</span>
+            </div>
+            <div class="message-body">
+              <div class="message-header-row">
+                <span class="message-author">{{ msg.role === 'user' ? '你' : 'Answer Agent' }}</span>
                 <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
               </div>
-              <div class="message-content">
-                {{ msg.content }}
-              </div>
-              <!-- 知识库引用 -->
-              <div v-if="msg.kb_names && msg.kb_names.length > 0" class="message-kb-tags">
-                <span
-                  v-for="kb in msg.kb_names"
-                  :key="kb"
-                  class="kb-tag"
-                >
-                  {{ kb }}
-                </span>
-              </div>
+              <div class="message-text">{{ msg.content }}</div>
               <!-- 引用文件 -->
               <div v-if="msg.files_used && msg.files_used.length > 0" class="message-files">
-                <span class="files-label">参考文件:</span>
+                <span class="files-label">引用:</span>
                 <span
                   v-for="file in msg.files_used"
                   :key="file"
@@ -128,8 +91,8 @@ function formatDate(timestamp: string): string {
               </div>
             </div>
           </div>
-        </template>
-      </div>
+        </div>
+      </template>
     </div>
   </main>
 </template>
@@ -140,6 +103,7 @@ function formatDate(timestamp: string): string {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
 /* 空状态 */
@@ -148,61 +112,48 @@ function formatDate(timestamp: string): string {
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.welcome {
+  text-align: center;
   padding: 40px;
 }
 
-.welcome-content {
-  text-align: center;
-  max-width: 480px;
-}
-
-.welcome-content h2 {
-  font-size: 24px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 12px 0;
-}
-
-.welcome-content > p {
-  font-size: 16px;
-  color: var(--text-secondary);
-  margin: 0 0 32px 0;
-}
-
-.hints {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  text-align: left;
-}
-
-.hint-item {
+.welcome-logo {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 24px;
   display: flex;
   align-items: center;
-  gap: 12px;
-  padding: 12px 16px;
-  background: var(--bg-secondary);
-  border-radius: 8px;
-  font-size: 14px;
-  color: var(--text-secondary);
+  justify-content: center;
+  background: var(--accent-color);
+  border-radius: var(--radius-lg);
+  font-size: 28px;
+  color: white;
 }
 
-.hint-icon {
-  font-size: 18px;
+.welcome h1 {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 8px 0;
+}
+
+.welcome p {
+  font-size: 15px;
+  color: var(--text-secondary);
+  margin: 0;
 }
 
 /* 加载中 */
 .loading-state {
   flex: 1;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 16px;
-  color: var(--text-secondary);
 }
 
-.loading-spinner {
+.spinner {
   width: 32px;
   height: 32px;
   border: 3px solid var(--border-color);
@@ -212,36 +163,14 @@ function formatDate(timestamp: string): string {
 }
 
 @keyframes spin {
-  to {
-    transform: rotate(360deg);
-  }
+  to { transform: rotate(360deg); }
 }
 
 /* 消息容器 */
 .messages-container {
   flex: 1;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}
-
-.messages-header {
-  padding: 16px 20px;
-  border-bottom: 1px solid var(--border-color);
-  background: var(--bg-primary);
-}
-
-.conversation-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
-.messages-list {
-  flex: 1;
   overflow-y: auto;
-  padding: 20px;
+  padding: 20px 0;
 }
 
 .no-messages {
@@ -249,95 +178,76 @@ function formatDate(timestamp: string): string {
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: var(--text-secondary);
+  color: var(--text-tertiary);
   font-size: 14px;
 }
 
-/* 消息样式 */
-.message-wrapper {
-  margin-bottom: 24px;
+.message-row {
+  padding: 12px 20%;
 }
 
-.message-wrapper.user {
+.message-row.user {
+  background: rgba(0, 0, 0, 0.02);
+}
+
+[data-theme="dark"] .message-row.user {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.message-content-wrapper {
   display: flex;
-  justify-content: flex-end;
+  gap: 12px;
+  max-width: 800px;
+  margin: 0 auto;
 }
 
-.message-wrapper.assistant {
+.message-avatar {
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
   display: flex;
-  justify-content: flex-start;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-hover);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  color: var(--text-secondary);
 }
 
-.message {
-  max-width: 80%;
-  padding: 12px 16px;
-  border-radius: 12px;
-  background: var(--bg-secondary);
-}
-
-.message-wrapper.user .message {
+.message-row.assistant .message-avatar {
   background: var(--accent-color);
   color: white;
 }
 
-.message-wrapper.assistant .message {
-  background: var(--bg-secondary);
-  color: var(--text-primary);
+.message-body {
+  flex: 1;
+  min-width: 0;
 }
 
-.message-header {
+.message-header-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 6px;
-  font-size: 12px;
+  margin-bottom: 4px;
 }
 
-.message-wrapper.user .message-header {
-  color: rgba(255, 255, 255, 0.8);
-}
-
-.message-wrapper.assistant .message-header {
-  color: var(--text-secondary);
-}
-
-.message-role {
+.message-author {
+  font-size: 14px;
   font-weight: 500;
+  color: var(--text-primary);
 }
 
 .message-time {
-  opacity: 0.7;
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
-.message-content {
-  font-size: 14px;
-  line-height: 1.6;
+.message-text {
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-}
-
-/* 知识库标签 */
-.message-kb-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  margin-top: 8px;
-}
-
-.kb-tag {
-  display: inline-block;
-  padding: 2px 8px;
-  background: rgba(79, 110, 247, 0.1);
-  color: var(--accent-color);
-  font-size: 11px;
-  border-radius: 4px;
-  border: 1px solid rgba(79, 110, 247, 0.2);
-}
-
-.message-wrapper.user .kb-tag {
-  background: rgba(255, 255, 255, 0.2);
-  color: white;
-  border-color: rgba(255, 255, 255, 0.3);
 }
 
 /* 引用文件 */
@@ -351,58 +261,47 @@ function formatDate(timestamp: string): string {
   border-top: 1px solid var(--border-color);
 }
 
-.message-wrapper.user .message-files {
-  border-top-color: rgba(255, 255, 255, 0.2);
-}
-
 .files-label {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-
-.message-wrapper.user .files-label {
-  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  color: var(--text-tertiary);
 }
 
 .file-tag {
   display: inline-block;
-  padding: 2px 6px;
-  background: var(--bg-primary);
+  padding: 2px 8px;
+  background: var(--bg-hover);
   color: var(--text-secondary);
-  font-size: 11px;
-  border-radius: 3px;
+  font-size: 12px;
+  border-radius: var(--radius-sm);
   font-family: monospace;
 }
 
-.message-wrapper.user .file-tag {
-  background: rgba(255, 255, 255, 0.15);
-  color: white;
-}
-
-/* 日期分隔线 */
+/* 日期分隔 */
 .date-divider {
   display: flex;
   align-items: center;
   justify-content: center;
-  margin: 24px 0;
-  position: relative;
-}
-
-.date-divider::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 1px;
-  background: var(--border-color);
+  margin: 24px 0 16px;
 }
 
 .date-divider span {
-  position: relative;
-  padding: 0 12px;
-  background: var(--bg-primary);
-  color: var(--text-secondary);
+  padding: 4px 12px;
+  background: var(--bg-hover);
+  color: var(--text-tertiary);
   font-size: 12px;
-  z-index: 1;
+  border-radius: var(--radius-full);
+}
+
+/* 响应式 */
+@media (max-width: 1200px) {
+  .message-row {
+    padding: 12px 10%;
+  }
+}
+
+@media (max-width: 768px) {
+  .message-row {
+    padding: 12px 16px;
+  }
 }
 </style>

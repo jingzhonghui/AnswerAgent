@@ -2,10 +2,10 @@
 import { ref, onMounted } from 'vue'
 import ConversationSidebar from '@/components/ConversationSidebar.vue'
 import ChatWindow from '@/components/ChatWindow.vue'
+import InputBar from '@/components/InputBar.vue'
 
 const isDark = ref(false)
 
-// 初始化主题
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark') {
@@ -14,70 +14,63 @@ onMounted(() => {
   }
 })
 
-// 切换主题
 function toggleTheme() {
   isDark.value = !isDark.value
   if (isDark.value) {
     document.documentElement.setAttribute('data-theme', 'dark')
-    localStorage.setItem('theme', 'dark')
   } else {
     document.documentElement.removeAttribute('data-theme')
-    localStorage.setItem('theme', 'light')
   }
+  localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
 </script>
 
 <template>
   <div class="app">
-    <!-- 侧边栏 -->
     <ConversationSidebar />
-
-    <!-- 主聊天区域 -->
-    <div class="main-area">
-      <!-- 顶部工具栏 -->
-      <header class="top-bar">
-        <button class="theme-btn" @click="toggleTheme">
-          {{ isDark ? '☀️' : '🌙' }}
-        </button>
-      </header>
-
-      <!-- 聊天窗口 -->
+    <main class="main">
       <ChatWindow />
-    </div>
+      <InputBar />
+    </main>
   </div>
 </template>
 
 <style>
-/* CSS 变量定义 */
+/* DeepSeek 风格变量 */
 :root {
   --bg-primary: #ffffff;
-  --bg-secondary: #f5f5f5;
-  --bg-sidebar: #f0f0f0;
+  --bg-sidebar: #f9f9f9;
+  --bg-hover: #f0f0f0;
+  --bg-active: #e8e8e8;
   --text-primary: #1a1a1a;
   --text-secondary: #666666;
-  --accent-color: #4f6ef7;
-  --border-color: #e0e0e0;
-  --hover-bg: #e8e8e8;
-  --message-user-bg: #4f6ef7;
-  --message-ai-bg: #f0f0f0;
-  --code-bg: #f6f8fa;
+  --text-tertiary: #999999;
+  --accent-color: #4e6ef2;
+  --accent-hover: #4662d9;
+  --border-color: #e5e5e5;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 9999px;
 }
 
 [data-theme="dark"] {
   --bg-primary: #1a1a1a;
-  --bg-secondary: #242424;
-  --bg-sidebar: #1e1e1e;
-  --text-primary: #e8e8e8;
-  --text-secondary: #999999;
-  --accent-color: #6b84f8;
-  --border-color: #333333;
-  --hover-bg: #2a2a2a;
-  --message-user-bg: #3d5af1;
-  --message-ai-bg: #2a2a2a;
-  --code-bg: #2d2d2d;
+  --bg-sidebar: #151515;
+  --bg-hover: #252525;
+  --bg-active: #333333;
+  --text-primary: #f0f0f0;
+  --text-secondary: #b0b0b0;
+  --text-tertiary: #666666;
+  --accent-color: #5b7bf5;
+  --accent-hover: #6b8bf6;
+  --border-color: #2a2a2a;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 
-/* 全局样式 */
 * {
   margin: 0;
   padding: 0;
@@ -89,6 +82,7 @@ body {
   background: var(--bg-primary);
   color: var(--text-primary);
   line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
@@ -102,42 +96,15 @@ body {
   overflow: hidden;
 }
 
-.main-area {
+.main {
   flex: 1;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  position: relative;
 }
 
-.top-bar {
-  height: 56px;
-  padding: 0 20px;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  background: var(--bg-primary);
-}
-
-.theme-btn {
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--bg-secondary);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  font-size: 16px;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.theme-btn:hover {
-  background: var(--hover-bg);
-}
-
-/* 滚动条样式 */
+/* 滚动条 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -148,11 +115,15 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--border-color);
+  background: transparent;
   border-radius: 3px;
 }
 
+:hover::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+}
+
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-secondary);
+  background: var(--text-tertiary);
 }
 </style>

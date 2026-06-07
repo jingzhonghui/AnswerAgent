@@ -16,6 +16,8 @@ export const useChatStore = defineStore('chat', () => {
   const activeMessages = ref<Message[]>([])
   const isLoading = ref(false)
   const isConversationLoading = ref(false)
+  const isStreaming = ref(false)
+  let abortController: AbortController | null = null
 
   // 计算属性
   const hasActiveConversation = () => activeConversationId.value !== null
@@ -113,6 +115,59 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 发送消息（流式）
+  async function sendMessage(content: string): Promise<void> {
+    if (!activeConversationId.value) {
+      // 如果没有活动对话，先创建一个
+      const newId = await createConversation()
+      if (!newId) return
+    }
+
+    isStreaming.value = true
+    abortController = new AbortController()
+
+    // 添加用户消息到本地
+    const userMsg: Message = {
+      role: 'user',
+      content,
+      timestamp: new Date().toISOString()
+    }
+    activeMessages.value.push(userMsg)
+
+    // 添加助手草稿消息
+    const assistantMsg: Message = {
+      role: 'assistant',
+      content: '',
+      timestamp: new Date().toISOString()
+    }
+    activeMessages.value.push(assistantMsg)
+
+    try {
+      // TODO: 实现 SSE 流式调用
+      // 模拟流式响应
+      const text = '这是一个模拟的回复。实际实现需要使用 @microsoft/fetch-event-source 来消费后端 SSE 流。'
+      for (let i = 0; i < text.length; i++) {
+        if (abortController?.signal.aborted) break
+        await new Promise(r => setTimeout(r, 30))
+        assistantMsg.content += text[i]
+      }
+    } catch (error) {
+      console.error('Failed to send message:', error)
+      assistantMsg.content = '抱歉，发生了错误，请重试。'
+    } finally {
+      isStreaming.value = false
+      abortController = null
+      // 刷新对话列表更新标题
+      await loadConversations()
+    }
+  }
+
+  // 停止生成
+  function stopStreaming(): void {
+    abortController?.abort()
+    isStreaming.value = false
+  }
+
   return {
     // 状态
     conversations,
@@ -120,6 +175,7 @@ export const useChatStore = defineStore('chat', () => {
     activeMessages,
     isLoading,
     isConversationLoading,
+    isStreaming,
     // 计算属性
     hasActiveConversation,
     activeConversation,
@@ -129,6 +185,8 @@ export const useChatStore = defineStore('chat', () => {
     selectConversation,
     deleteConversation,
     renameConversation,
-    setActiveConversation
+    setActiveConversation,
+    sendMessage,
+    stopStreaming
   }
 })
