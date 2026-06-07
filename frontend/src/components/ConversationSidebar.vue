@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
@@ -7,7 +7,41 @@ const chatStore = useChatStore()
 // 向父组件发出收起事件
 const emit = defineEmits<{
   (e: 'collapse'): void
+  (e: 'toggleTheme'): void
 }>()
+
+const props = defineProps<{
+  isDark: boolean
+}>()
+
+// 用户菜单状态
+const showMenu = ref(false)
+const menuRef = ref<HTMLElement | null>(null)
+
+function toggleMenu() {
+  showMenu.value = !showMenu.value
+}
+
+function handleMenuAction(action: () => void) {
+  action()
+  showMenu.value = false
+}
+
+function onClickOutside(event: MouseEvent) {
+  if (menuRef.value && !menuRef.value.contains(event.target as Node)) {
+    showMenu.value = false
+  }
+}
+
+onMounted(() => {
+  setTimeout(() => {
+    document.addEventListener('click', onClickOutside)
+  }, 0)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onClickOutside)
+})
 
 const editingId = ref<string | null>(null)
 const editingTitle = ref('')
@@ -103,7 +137,12 @@ async function handleDelete(event: Event, id: string) {
     <!-- Logo -->
     <div class="sidebar-header">
       <div class="logo">
-        <span class="logo-icon">◆</span>
+        <span class="logo-icon">
+          <svg viewBox="0 0 1024 1024" width="16" height="16" fill="currentColor">
+            <path d="M231.936 409.6v174.592H161.792V409.6h70.144m0-34.816H161.792c-19.456 0-34.816 15.872-34.816 34.816v174.592c0 18.944 15.872 34.816 34.816 34.816h69.632c19.456 0 34.816-15.872 34.816-34.816V409.6c0.512-18.944-15.36-34.816-34.304-34.816zM860.16 409.6v174.592h-69.632V409.6H860.16m0-34.816h-69.632c-18.944 0-34.816 15.872-34.816 34.816v174.592c0 19.456 15.872 34.816 34.816 34.816H860.16c19.456 0 34.816-15.872 34.816-34.816V409.6c0-18.944-15.36-34.816-34.816-34.816z m-349.184 349.184c38.4 0 69.632 31.232 69.632 69.632s-31.232 69.632-69.632 69.632-69.632-31.232-69.632-69.632 31.232-69.632 69.632-69.632m0-34.816c-57.856 0-104.448 47.104-104.448 104.448 0 57.856 47.104 104.96 104.448 104.96s104.448-47.104 104.448-104.448-46.592-104.96-104.448-104.96zM441.344 374.784H371.2v69.632h69.632V374.784z m209.408 0h-69.632v69.632h69.632V374.784z m-19.456 174.592c-24.064 41.472-68.608 69.632-120.32 69.632s-96.256-28.16-120.32-69.632h-39.424c27.136 61.44 88.064 104.448 159.744 104.448s132.608-43.008 159.744-104.448h-39.424z"/>
+            <path d="M215.04 374.784c43.52-121.856 159.232-209.408 295.936-209.408s252.416 87.552 295.936 209.408h37.376c-44.544-141.824-176.64-244.224-333.312-244.224s-288.256 102.912-332.8 244.224H215.04z m577.024 244.224c-36.352 72.704-99.328 129.024-176.128 156.16v37.376c96.768-30.208 175.104-101.376 215.04-193.536h-38.912z"/>
+          </svg>
+        </span>
         <span class="logo-text">Answer Agent</span>
       </div>
       <button
@@ -200,6 +239,29 @@ async function handleDelete(event: Event, id: string) {
       <div class="user-info">
         <div class="user-avatar">U</div>
         <span class="user-name">用户</span>
+      </div>
+      <div class="user-menu-wrapper" ref="menuRef">
+        <button class="menu-trigger" @click.stop="toggleMenu" title="更多">
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="5" cy="12" r="2"/>
+            <circle cx="12" cy="12" r="2"/>
+            <circle cx="19" cy="12" r="2"/>
+          </svg>
+        </button>
+        <Transition name="menu-dropdown">
+          <div v-if="showMenu" class="dropdown-menu">
+            <button class="menu-item" @click="handleMenuAction(() => emit('toggleTheme'))">
+              <svg v-if="isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="5"/>
+                <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+              </svg>
+              <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+              </svg>
+              <span>{{ isDark ? '亮色主题' : '暗色主题' }}</span>
+            </button>
+          </div>
+        </Transition>
       </div>
     </div>
   </aside>
@@ -407,6 +469,9 @@ async function handleDelete(event: Event, id: string) {
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 
 .user-info {
@@ -439,5 +504,84 @@ async function handleDelete(event: Event, id: string) {
 .user-name {
   font-size: 14px;
   color: var(--text-primary);
+}
+
+.user-menu-wrapper {
+  position: relative;
+}
+
+.menu-trigger {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+}
+
+.menu-trigger:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.menu-trigger svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dropdown-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  min-width: 150px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  z-index: 100;
+}
+
+.menu-item {
+  width: 100%;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.menu-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.menu-dropdown-enter-active,
+.menu-dropdown-leave-active {
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.menu-dropdown-enter-from,
+.menu-dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 </style>

@@ -141,13 +141,12 @@ export const useChatStore = defineStore('chat', () => {
     }
     activeMessages.value.push(userMsg)
 
-    // 添加助手草稿消息
-    const assistantMsg: Message = {
+    // 添加助手草稿消息（不保留变量引用，每次通过数组索引访问以保证 Vue 响应式）
+    activeMessages.value.push({
       role: 'assistant',
       content: '',
       timestamp: new Date().toISOString(),
-    }
-    activeMessages.value.push(assistantMsg)
+    })
 
     const collectedFiles: FileRef[] = []
 
@@ -172,25 +171,37 @@ export const useChatStore = defineStore('chat', () => {
                 file_name: f.split('/').pop() || f,
               })
             }
-            assistantMsg.files_used = [...collectedFiles]
+            // 通过响应式数组索引更新，触发 Vue 响应式
+            const idx = activeMessages.value.length - 1
+            if (activeMessages.value[idx]) {
+              activeMessages.value[idx].files_used = [...collectedFiles]
+            }
           },
           onToken(tokenContent) {
-            assistantMsg.content += tokenContent
+            // 通过响应式数组索引更新，触发 Vue 响应式
+            const idx = activeMessages.value.length - 1
+            if (activeMessages.value[idx]) {
+              activeMessages.value[idx].content += tokenContent
+            }
           },
           onDone(_messageId) {
             // 完成
           },
           onError(message) {
-            if (!assistantMsg.content) {
-              assistantMsg.content = `错误: ${message}`
+            const idx = activeMessages.value.length - 1
+            const lastMsg = activeMessages.value[idx]
+            if (lastMsg && !lastMsg.content) {
+              lastMsg.content = `错误: ${message}`
             }
           },
         },
         abortController.signal,
       )
     } catch {
-      if (!abortController?.signal.aborted && !assistantMsg.content) {
-        assistantMsg.content = '抱歉，发生了错误，请重试。'
+      const idx = activeMessages.value.length - 1
+      const lastMsg = activeMessages.value[idx]
+      if (!abortController?.signal.aborted && lastMsg && !lastMsg.content) {
+        lastMsg.content = '抱歉，发生了错误，请重试。'
       }
     } finally {
       isStreaming.value = false
