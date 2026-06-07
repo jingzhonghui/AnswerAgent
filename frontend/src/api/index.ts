@@ -1,9 +1,10 @@
 import axios, { type AxiosInstance } from 'axios'
+import { fetchEventSource } from '@microsoft/fetch-event-source'
 import type {
   ConversationSummary,
   Conversation,
   CreateConversationResponse,
-  RenameConversationRequest
+  RenameConversationRequest,
 } from '@/types'
 
 // axios 实例配置
@@ -31,8 +32,10 @@ export async function getConversations(): Promise<ConversationSummary[]> {
 }
 
 // 新建对话 -> POST /api/conversations
-export async function createConversation(): Promise<CreateConversationResponse> {
-  const response = await api.post<CreateConversationResponse>('/conversations')
+export async function createConversation(title?: string): Promise<CreateConversationResponse> {
+  const response = await api.post<CreateConversationResponse>('/conversations', {
+    title: title || '新对话',
+  })
   return response.data
 }
 
@@ -51,6 +54,67 @@ export async function deleteConversation(id: string): Promise<void> {
 export async function renameConversation(id: string, title: string): Promise<void> {
   const data: RenameConversationRequest = { title }
   await api.patch(`/conversations/${id}/title`, data)
+}
+
+// SSE 流式问答 -> POST /api/chat/stream
+export interface StreamChatHandlers {
+  onKbMatched: (kbNames: string[]) => void
+  onFilesSelected: (kb: string, files: string[]) => void
+  onToken: (content: string) => void
+  onDone: (messageId: string) => void
+  onError: (message: string) => void
+}
+
+export async function streamChat(
+  request: {
+    conversation_id: string
+    message: string
+    mode: string
+  },
+  handlers: StreamChatHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  await fetchEventSource('/api/chat/stream', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(request),
+    signal,
+    onmessage(event) {
+      if (!event.data) return
+      try {
+        const data = JSON.parse(event.data)
+        switch (event.event) {
+          case 'kb_matched':
+            handlers.onKbMatched(data.kb_names || [])
+            break
+          case 'files_selected':
+            handlers.onFilesSelected(data.kb || '', data.files || [])
+            break
+          case 'token':
+            handlers.onToken(data.content || '')
+            break
+          case 'done':
+            handlers.onDone(data.message_id || '')
+            break
+          case 'error':
+            handlers.onError(data.message || '未知错误')
+            break
+        }
+      } catch {
+        // 忽略解析失败的事件
+      }
+    },
+    onerror(err) {
+      // 用户主动 abort 不报错
+      if (signal.aborted) {
+        throw err
+      }
+      handlers.onError('连接失败，请重试')
+      throw err // 不重试
+    },
+  })
 }
 
 export default api

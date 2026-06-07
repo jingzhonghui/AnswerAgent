@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from core.config import settings
-from api import conversations
+from api import conversations, knowledge_bases, chat
 
 
 # 创建 FastAPI 应用
@@ -24,6 +24,8 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(conversations.router)
+app.include_router(knowledge_bases.router)
+app.include_router(chat.router)
 
 
 @app.get("/api/health")
@@ -36,7 +38,6 @@ if __name__ == "__main__":
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
-        reload=True,
-        reload_dirs=["."],
+        port=8765,
+        reload=False,
     )

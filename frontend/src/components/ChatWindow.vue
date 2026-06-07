@@ -1,17 +1,44 @@
 <script setup lang="ts">
+import { computed } from 'vue'
+import MarkdownIt from 'markdown-it'
+import hljs from 'highlight.js'
 import { useChatStore } from '@/stores/chat'
-
 const chatStore = useChatStore()
 
-function formatTime(timestamp: string): string {
+// markdown-it 实例
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  breaks: true,
+  highlight(str: string, lang: string): string {
+    if (lang && hljs.getLanguage(lang)) {
+      try {
+        return '<pre class="hljs"><code>' +
+          hljs.highlight(str, { language: lang, ignoreIllegals: true }).value +
+          '</code></pre>'
+      } catch {
+        // fall through
+      }
+    }
+    return '<pre class="hljs"><code>' + md.utils.escapeHtml(str) + '</code></pre>'
+  },
+})
+
+function renderMarkdown(text: string): string {
+  return md.render(text)
+}
+
+function formatTime(timestamp?: string): string {
+  if (!timestamp) return ''
   const date = new Date(timestamp)
   return date.toLocaleTimeString('zh-CN', {
     hour: '2-digit',
-    minute: '2-digit'
+    minute: '2-digit',
   })
 }
 
-function formatDate(timestamp: string): string {
+function formatDate(timestamp?: string): string {
+  if (!timestamp) return ''
   const date = new Date(timestamp)
   const now = new Date()
   const isToday = date.toDateString() === now.toDateString()
@@ -23,9 +50,19 @@ function formatDate(timestamp: string): string {
 
   return date.toLocaleDateString('zh-CN', {
     month: 'short',
-    day: 'numeric'
+    day: 'numeric',
   })
 }
+
+// 获取消息时间戳（兼容 timestamp 和 created_at）
+function getMsgTimestamp(msg: { timestamp?: string; created_at?: string }): string {
+  return msg.timestamp || msg.created_at || ''
+}
+
+// 是否显示知识库匹配状态
+const showKbStatus = computed(() => {
+  return chatStore.isStreaming && chatStore.matchedKbs.length > 0
+})
 </script>
 
 <template>
@@ -48,6 +85,18 @@ function formatDate(timestamp: string): string {
 
     <!-- 消息列表 -->
     <div v-else class="messages-container">
+      <!-- 知识库匹配状态 -->
+      <div v-if="showKbStatus" class="kb-match-status">
+        <span class="kb-match-label">匹配知识库:</span>
+        <span
+          v-for="kb in chatStore.matchedKbs"
+          :key="kb"
+          class="kb-badge"
+        >
+          {{ kb }}
+        </span>
+      </div>
+
       <div v-if="chatStore.activeMessages.length === 0" class="no-messages">
         <p>发送消息开始对话</p>
       </div>
@@ -61,10 +110,10 @@ function formatDate(timestamp: string): string {
         >
           <!-- 日期分隔 -->
           <div
-            v-if="index === 0 || formatDate(msg.timestamp) !== formatDate(chatStore.activeMessages[index - 1].timestamp)"
+            v-if="index === 0 || formatDate(getMsgTimestamp(msg)) !== formatDate(getMsgTimestamp(chatStore.activeMessages[index - 1]))"
             class="date-divider"
           >
-            <span>{{ formatDate(msg.timestamp) }}</span>
+            <span>{{ formatDate(getMsgTimestamp(msg)) }}</span>
           </div>
 
           <div class="message-content-wrapper">
@@ -74,19 +123,42 @@ function formatDate(timestamp: string): string {
             </div>
             <div class="message-body">
               <div class="message-header-row">
-                <span class="message-author">{{ msg.role === 'user' ? '你' : 'Answer Agent' }}</span>
-                <span class="message-time">{{ formatTime(msg.timestamp) }}</span>
+                <span class="message-author">
+                  {{ msg.role === 'user' ? '你' : 'Answer Agent' }}
+                </span>
+                <span class="message-time">{{ formatTime(getMsgTimestamp(msg)) }}</span>
               </div>
-              <div class="message-text">{{ msg.content }}</div>
+
+              <!-- 用户消息：纯文本 -->
+              <div v-if="msg.role === 'user'" class="message-text">
+                {{ msg.content }}
+              </div>
+
+              <!-- 助手消息：markdown 渲染 -->
+              <div
+                v-else
+                class="message-text markdown-body"
+                v-html="renderMarkdown(msg.content)"
+              />
+
+              <!-- 流式光标 -->
+              <span
+                v-if="msg.role === 'assistant' && chatStore.isStreaming && index === chatStore.activeMessages.length - 1"
+                class="streaming-cursor"
+              >▌</span>
+
               <!-- 引用文件 -->
-              <div v-if="msg.files_used && msg.files_used.length > 0" class="message-files">
-                <span class="files-label">引用:</span>
+              <div
+                v-if="msg.files_used && msg.files_used.length > 0"
+                class="message-files"
+              >
+                <span class="files-label">参考文件:</span>
                 <span
                   v-for="file in msg.files_used"
-                  :key="file"
+                  :key="file.file_path"
                   class="file-tag"
                 >
-                  {{ file }}
+                  {{ file.file_path }}
                 </span>
               </div>
             </div>
@@ -164,6 +236,32 @@ function formatDate(timestamp: string): string {
 
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+/* 知识库匹配状态 */
+.kb-match-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20%;
+  background: var(--bg-sidebar);
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.kb-match-label {
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.kb-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: rgba(78, 110, 242, 0.1);
+  color: var(--accent-color);
+  font-size: 12px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(78, 110, 242, 0.2);
 }
 
 /* 消息容器 */
@@ -250,6 +348,82 @@ function formatDate(timestamp: string): string {
   word-break: break-word;
 }
 
+/* 流式光标 */
+.streaming-cursor {
+  animation: blink 1s step-end infinite;
+  color: var(--accent-color);
+  font-size: 15px;
+}
+
+@keyframes blink {
+  50% { opacity: 0; }
+}
+
+/* markdown 渲染样式 */
+.markdown-body {
+  white-space: normal;
+}
+
+.markdown-body :deep(p) {
+  margin: 0 0 8px;
+}
+
+.markdown-body :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.markdown-body :deep(code) {
+  padding: 2px 6px;
+  background: var(--bg-hover);
+  border-radius: 4px;
+  font-size: 13px;
+  font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+}
+
+.markdown-body :deep(pre) {
+  margin: 8px 0;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.markdown-body :deep(pre code) {
+  display: block;
+  padding: 12px 16px;
+  background: var(--bg-sidebar);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.markdown-body :deep(ul),
+.markdown-body :deep(ol) {
+  padding-left: 20px;
+  margin: 4px 0;
+}
+
+.markdown-body :deep(li) {
+  margin: 2px 0;
+}
+
+.markdown-body :deep(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--accent-color);
+  color: var(--text-secondary);
+}
+
+.markdown-body :deep(a) {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.markdown-body :deep(a:hover) {
+  text-decoration: underline;
+}
+
+.markdown-body :deep(strong) {
+  font-weight: 600;
+}
+
 /* 引用文件 */
 .message-files {
   display: flex;
@@ -297,10 +471,16 @@ function formatDate(timestamp: string): string {
   .message-row {
     padding: 12px 10%;
   }
+  .kb-match-status {
+    padding: 12px 10%;
+  }
 }
 
 @media (max-width: 768px) {
   .message-row {
+    padding: 12px 16px;
+  }
+  .kb-match-status {
     padding: 12px 16px;
   }
 }

@@ -5,12 +5,18 @@ import ChatWindow from '@/components/ChatWindow.vue'
 import InputBar from '@/components/InputBar.vue'
 
 const isDark = ref(false)
+const sidebarCollapsed = ref(false)
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark') {
     isDark.value = true
     document.documentElement.setAttribute('data-theme', 'dark')
+  }
+
+  const savedCollapsed = localStorage.getItem('sidebarCollapsed')
+  if (savedCollapsed === '1') {
+    sidebarCollapsed.value = true
   }
 })
 
@@ -23,12 +29,49 @@ function toggleTheme() {
   }
   localStorage.setItem('theme', isDark.value ? 'dark' : 'light')
 }
+
+function collapseSidebar() {
+  sidebarCollapsed.value = true
+  localStorage.setItem('sidebarCollapsed', '1')
+}
+
+function expandSidebar() {
+  sidebarCollapsed.value = false
+  localStorage.setItem('sidebarCollapsed', '0')
+}
 </script>
 
 <template>
   <div class="app">
-    <ConversationSidebar />
+    <Transition name="sidebar">
+      <ConversationSidebar v-if="!sidebarCollapsed" @collapse="collapseSidebar" />
+    </Transition>
     <main class="main">
+      <button
+        v-if="sidebarCollapsed"
+        class="expand-sidebar-btn"
+        @click="expandSidebar"
+        title="展开侧边栏"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <path d="M9 4v16"/>
+          <path d="M13 10l3 2-3 2"/>
+        </svg>
+      </button>
+      <button
+        class="theme-toggle-btn"
+        @click="toggleTheme"
+        :title="isDark ? '切换亮色主题' : '切换暗色主题'"
+      >
+        <svg v-if="isDark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="5"/>
+          <path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+        </svg>
+      </button>
       <ChatWindow />
       <InputBar />
     </main>
@@ -125,5 +168,81 @@ body {
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--text-tertiary);
+}
+
+/* 浮动展开侧边栏按钮 */
+.expand-sidebar-btn {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: var(--shadow-sm);
+}
+
+.expand-sidebar-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+  border-color: var(--accent-color);
+}
+
+.expand-sidebar-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 主题切换按钮 */
+.theme-toggle-btn {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: var(--shadow-sm);
+}
+
+.theme-toggle-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.theme-toggle-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* 侧边栏过渡动画 */
+.sidebar-enter-active,
+.sidebar-leave-active {
+  transition: width 0.2s ease, opacity 0.2s ease, margin-left 0.2s ease;
+  overflow: hidden;
+}
+
+.sidebar-enter-from,
+.sidebar-leave-to {
+  width: 0 !important;
+  min-width: 0 !important;
+  margin-left: -1px;
+  opacity: 0;
 }
 </style>

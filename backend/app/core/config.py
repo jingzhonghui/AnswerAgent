@@ -14,10 +14,12 @@ class Settings(BaseSettings):
 
     # OpenAI Configuration
     openai_api_key: str = ""
+    openai_base_url: str = ""
     openai_model: str = "gpt-4o"
 
     # Anthropic Configuration
     anthropic_api_key: str = ""
+    anthropic_base_url: str = ""
     anthropic_model: str = "claude-3-5-sonnet-20241022"
 
     # Paths
@@ -28,7 +30,9 @@ class Settings(BaseSettings):
     history_window: int = 10  # Number of conversation rounds to keep
 
     class Config:
-        env_file = ".env"
+        env_file = str(
+            Path(__file__).parent.parent.parent / ".env"
+        )  # backend/.env，相对于 config.py(->core->app->backend)
         env_file_encoding = "utf-8"
         case_sensitive = False
 

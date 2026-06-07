@@ -4,6 +4,11 @@ import { useChatStore } from '@/stores/chat'
 
 const chatStore = useChatStore()
 
+// 向父组件发出收起事件
+const emit = defineEmits<{
+  (e: 'collapse'): void
+}>()
+
 const editingId = ref<string | null>(null)
 const editingTitle = ref('')
 const editInputRef = ref<HTMLInputElement | null>(null)
@@ -19,8 +24,7 @@ const groupedConversations = computed(() => {
     const diffDays = Math.floor((now.getTime() - date.getTime()) / (1000 * 60 * 60 * 24))
 
     let groupName: string
-    if (conv.isPinned) groupName = '置顶'
-    else if (diffDays === 0) groupName = '今天'
+    if (diffDays === 0) groupName = '今天'
     else if (diffDays === 1) groupName = '昨天'
     else if (diffDays < 7) groupName = '7天内'
     else if (diffDays < 30) groupName = '30天内'
@@ -31,7 +35,7 @@ const groupedConversations = computed(() => {
   })
 
   // 排序
-  const order = ['置顶', '今天', '昨天', '7天内', '30天内', '更早']
+  const order = ['今天', '昨天', '7天内', '30天内', '更早']
   const sortedGroups: Record<string, typeof chatStore.conversations> = {}
   order.forEach(name => {
     if (groups[name] && groups[name].length > 0) {
@@ -102,6 +106,17 @@ async function handleDelete(event: Event, id: string) {
         <span class="logo-icon">◆</span>
         <span class="logo-text">Answer Agent</span>
       </div>
+      <button
+        class="collapse-btn"
+        @click="emit('collapse')"
+        title="收起侧边栏"
+      >
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="4" width="18" height="16" rx="2"/>
+          <path d="M9 4v16"/>
+          <path d="M16 10l-3 2 3 2"/>
+        </svg>
+      </button>
     </div>
 
     <!-- 新建对话按钮 -->
@@ -198,10 +213,41 @@ async function handleDelete(event: Event, id: string) {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
 .sidebar-header {
   padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.collapse-btn {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.collapse-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.collapse-btn svg {
+  width: 18px;
+  height: 18px;
 }
 
 .logo {
