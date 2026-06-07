@@ -3,7 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from core.config import settings
-from api import conversations, knowledge_bases, chat
+from core.database import init_db
+from api import conversations, knowledge_bases, chat, auth
 
 
 # 创建 FastAPI 应用
@@ -26,6 +27,14 @@ app.add_middleware(
 app.include_router(conversations.router)
 app.include_router(knowledge_bases.router)
 app.include_router(chat.router)
+app.include_router(auth.router)
+
+
+@app.on_event("startup")
+async def startup():
+    """应用启动时初始化"""
+    await init_db()
+    settings.ensure_directories()
 
 
 @app.get("/api/health")

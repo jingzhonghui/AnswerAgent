@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # Chat settings
     history_window: int = 10  # Number of conversation rounds to keep
 
+    # JWT 认证配置
+    jwt_secret_key: str = "change-me-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_minutes: int = 1440  # 默认 24 小时
+
     class Config:
         env_file = str(
             Path(__file__).parent.parent.parent / ".env"

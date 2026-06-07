@@ -41,6 +41,7 @@ class ConversationDetail(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     messages: List[Message] = Field(default_factory=list, description="All messages in the conversation")
+    user_id: Optional[str] = Field(None, description="Owning user ID")
 
 
 class ConversationInStorage(BaseModel):
@@ -51,6 +52,7 @@ class ConversationInStorage(BaseModel):
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     messages: List[Message] = Field(default_factory=list, description="All messages in the conversation")
+    user_id: Optional[str] = Field(None, description="Owning user ID")
 
 
 class CreateConversationRequest(BaseModel):
@@ -112,3 +114,33 @@ class SseError(BaseModel):
     """SSE event: error occurred."""
     type: str = "error"
     message: str = Field(..., description="Error message")
+
+
+# ============================================================
+# Auth request/response models
+# ============================================================
+
+class UserRegisterRequest(BaseModel):
+    """用户注册请求"""
+    username: str = Field(..., min_length=2, max_length=50, description="用户名")
+    password: str = Field(..., min_length=6, max_length=100, description="密码")
+
+
+class UserLoginRequest(BaseModel):
+    """用户登录请求"""
+    username: str = Field(..., description="用户名")
+    password: str = Field(..., description="密码")
+
+
+class UserResponse(BaseModel):
+    """用户信息响应"""
+    id: str = Field(..., description="用户 ID")
+    username: str = Field(..., description="用户名")
+    created_at: datetime = Field(..., description="注册时间")
+
+
+class TokenResponse(BaseModel):
+    """认证令牌响应"""
+    access_token: str = Field(..., description="JWT 访问令牌")
+    token_type: str = Field(default="bearer", description="令牌类型")
+    user: UserResponse = Field(..., description="用户信息")

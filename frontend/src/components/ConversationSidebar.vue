@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
+import { useAuthStore } from '@/stores/auth'
 
 const chatStore = useChatStore()
+const authStore = useAuthStore()
 
 // 向父组件发出收起事件
 const emit = defineEmits<{
@@ -10,7 +12,7 @@ const emit = defineEmits<{
   (e: 'toggleTheme'): void
 }>()
 
-const props = defineProps<{
+defineProps<{
   isDark: boolean
 }>()
 
@@ -237,8 +239,8 @@ async function handleDelete(event: Event, id: string) {
     <!-- 底部用户信息 -->
     <div class="sidebar-footer">
       <div class="user-info">
-        <div class="user-avatar">U</div>
-        <span class="user-name">用户</span>
+        <div class="user-avatar">{{ authStore.user?.username?.charAt(0).toUpperCase() || 'U' }}</div>
+        <span class="user-name">{{ authStore.user?.username || '用户' }}</span>
       </div>
       <div class="user-menu-wrapper" ref="menuRef">
         <button class="menu-trigger" @click.stop="toggleMenu" title="更多">
@@ -259,6 +261,14 @@ async function handleDelete(event: Event, id: string) {
                 <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
               </svg>
               <span>{{ isDark ? '亮色主题' : '暗色主题' }}</span>
+            </button>
+            <button class="menu-item logout-item" @click="handleMenuAction(() => authStore.logout())">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+                <polyline points="16 17 21 12 16 7"/>
+                <line x1="21" y1="12" x2="9" y2="12"/>
+              </svg>
+              <span>退出登录</span>
             </button>
           </div>
         </Transition>
@@ -572,6 +582,11 @@ async function handleDelete(event: Event, id: string) {
   width: 16px;
   height: 16px;
   flex-shrink: 0;
+}
+
+.menu-item.logout-item:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
 }
 
 .menu-dropdown-enter-active,

@@ -16,10 +16,23 @@ const api: AxiosInstance = axios.create({
   }
 })
 
-// 请求拦截器 - 错误处理
+// 请求拦截器 - 自动附加 Bearer token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token')
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+})
+
+// 响应拦截器 - 错误处理 + 401 自动跳转登录
 api.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('access_token')
+      window.location.href = '/#/login'
+    }
     console.error('API Error:', error)
     return Promise.reject(error)
   }
@@ -74,10 +87,12 @@ export async function streamChat(
   handlers: StreamChatHandlers,
   signal: AbortSignal,
 ): Promise<void> {
+  const token = localStorage.getItem('access_token')
   await fetchEventSource('/api/chat/stream', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token || ''}`,
     },
     body: JSON.stringify(request),
     signal,
@@ -115,6 +130,36 @@ export async function streamChat(
       throw err // 不重试
     },
   })
+}
+
+// ============================================================
+// Auth API
+// ============================================================
+
+export interface AuthUser {
+  id: string
+  username: string
+}
+
+export interface AuthTokenResponse {
+  access_token: string
+  token_type: string
+  user: AuthUser
+}
+
+export async function apiLogin(username: string, password: string): Promise<AuthTokenResponse> {
+  const response = await api.post<AuthTokenResponse>('/auth/login', { username, password })
+  return response.data
+}
+
+export async function apiRegister(username: string, password: string): Promise<AuthTokenResponse> {
+  const response = await api.post<AuthTokenResponse>('/auth/register', { username, password })
+  return response.data
+}
+
+export async function apiGetMe(): Promise<AuthUser> {
+  const response = await api.get<AuthUser>('/auth/me')
+  return response.data
 }
 
 export default api

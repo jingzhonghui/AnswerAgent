@@ -9,7 +9,7 @@
 - DELETE /api/conversations/{id}     -> 删除对话
 - PATCH  /api/conversations/{id}/title -> 重命名对话标题
 """
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from typing import List
 
 from core.chat_manager import (
@@ -17,6 +17,7 @@ from core.chat_manager import (
     ConversationNotFoundError,
     PathSecurityError,
 )
+from core.deps import get_current_user
 from models.schemas import (
     ConversationCreate,
     ConversationUpdateTitle,
@@ -28,19 +29,22 @@ router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
 
 @router.get("", response_model=List[ConversationSummary])
-async def list_conversations():
-    """获取对话列表
+async def list_conversations(current_user: dict = Depends(get_current_user)):
+    """获取当前用户的对话列表
 
     按 updated_at 倒序排列，最新的对话在前。
 
     Returns:
         List[ConversationSummary]: 对话列表
     """
-    return chat_manager.list_conversations()
+    return chat_manager.list_conversations_by_user(current_user["user_id"])
 
 
 @router.post("", response_model=dict, status_code=status.HTTP_201_CREATED)
-async def create_conversation(data: ConversationCreate):
+async def create_conversation(
+    data: ConversationCreate,
+    current_user: dict = Depends(get_current_user),
+):
     """创建新对话
 
     Args:
@@ -49,7 +53,9 @@ async def create_conversation(data: ConversationCreate):
     Returns:
         dict: 包含新创建对话的 id 和 title
     """
-    conversation_id = chat_manager.create_conversation(title=data.title)
+    conversation_id = chat_manager.create_conversation(
+        title=data.title, user_id=current_user["user_id"]
+    )
     return {
         "id": conversation_id,
         "title": data.title,
@@ -57,7 +63,10 @@ async def create_conversation(data: ConversationCreate):
 
 
 @router.get("/{conversation_id}", response_model=ConversationDetail)
-async def get_conversation(conversation_id: str):
+async def get_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """获取对话详情
 
     Args:
@@ -71,7 +80,16 @@ async def get_conversation(conversation_id: str):
         HTTPException 400: 对话 ID 格式无效
     """
     try:
-        return chat_manager.get_conversation(conversation_id)
+        conv = chat_manager.get_conversation(conversation_id)
+
+        # 校验对话所有权
+        if conv.user_id and conv.user_id != current_user["user_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation not found: {conversation_id}",
+            )
+
+        return conv
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -90,7 +108,10 @@ async def get_conversation(conversation_id: str):
 
 
 @router.delete("/{conversation_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_conversation(conversation_id: str):
+async def delete_conversation(
+    conversation_id: str,
+    current_user: dict = Depends(get_current_user),
+):
     """删除对话
 
     Args:
@@ -101,6 +122,14 @@ async def delete_conversation(conversation_id: str):
         HTTPException 400: 对话 ID 格式无效
     """
     try:
+        # 先校验对话存在且属于当前用户
+        conv = chat_manager.get_conversation(conversation_id)
+        if conv.user_id and conv.user_id != current_user["user_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation not found: {conversation_id}",
+            )
+
         chat_manager.delete_conversation(conversation_id)
     except ValueError as e:
         raise HTTPException(
@@ -120,7 +149,11 @@ async def delete_conversation(conversation_id: str):
 
 
 @router.patch("/{conversation_id}/title", response_model=dict)
-async def rename_conversation(conversation_id: str, data: ConversationUpdateTitle):
+async def rename_conversation(
+    conversation_id: str,
+    data: ConversationUpdateTitle,
+    current_user: dict = Depends(get_current_user),
+):
     """重命名对话标题
 
     Args:
@@ -135,6 +168,14 @@ async def rename_conversation(conversation_id: str, data: ConversationUpdateTitl
         HTTPException 400: 对话 ID 格式无效
     """
     try:
+        # 先校验对话属于当前用户
+        conv = chat_manager.get_conversation(conversation_id)
+        if conv.user_id and conv.user_id != current_user["user_id"]:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Conversation not found: {conversation_id}",
+            )
+
         chat_manager.rename_conversation(conversation_id, data.title)
         return {
             "id": conversation_id,

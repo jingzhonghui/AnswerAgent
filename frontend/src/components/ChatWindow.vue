@@ -2,7 +2,9 @@
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
+const authStore = useAuthStore()
 const chatStore = useChatStore()
 
 // 消息列表容器引用和自动滚动逻辑
@@ -222,7 +224,7 @@ const showKbStatus = computed(() => {
               </div>
             </div>
             <div class="message-avatar user-avatar">
-              <span>U</span>
+              <span>{{ authStore.user?.username?.charAt(0).toUpperCase() || 'U' }}</span>
             </div>
           </div>
         </div>

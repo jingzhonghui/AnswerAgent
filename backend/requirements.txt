@@ -7,3 +7,6 @@ langchain-openai
 langchain-anthropic
 sse-starlette
 jieba
+pyjwt[crypto]
+bcrypt>=4.0.0
+aiosqlite

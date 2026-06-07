@@ -19,7 +19,7 @@ import json
 import logging
 from typing import AsyncGenerator, Dict, List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
 
 from core.chat_manager import (
@@ -27,6 +27,7 @@ from core.chat_manager import (
     ConversationNotFoundError,
 )
 from core.config import settings
+from core.deps import get_current_user
 from core.kb_router import route_knowledge_bases
 from core.file_loader import select_and_load_files, LoadedFile
 from core.chain_builder import (
@@ -215,7 +216,7 @@ async def _stream_events(
 async def chat_stream(request: Request):
     """POST /api/chat/stream
 
-    SSE 流式问答接口。
+    SSE 流式问答接口。需要认证。
 
     Request body (JSON):
         conversation_id: str - 对话 ID
@@ -225,6 +226,20 @@ async def chat_stream(request: Request):
     Returns:
         SSE 事件流: kb_matched -> files_selected* -> token* -> done | error
     """
+    # 手动认证（SSE async generator 不能用 Depends）
+    try:
+        current_user = await get_current_user(request)
+    except HTTPException as e:
+        async def error_gen():
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {"message": f"认证失败: {e.detail}"},
+                    ensure_ascii=False,
+                ),
+            }
+        return EventSourceResponse(error_gen())
+
     # 解析请求体
     body = await request.json()
     try:
@@ -244,13 +259,21 @@ async def chat_stream(request: Request):
     message = chat_request.message
     mode = chat_request.mode
 
-    # 确保对话存在
+    # 确保对话存在且属于当前用户
+    should_create = False
     try:
-        chat_manager.get_conversation(conversation_id)
+        conv = chat_manager.get_conversation(conversation_id)
+        if conv.user_id and conv.user_id != current_user["user_id"]:
+            should_create = True
     except (ConversationNotFoundError, ValueError):
+        should_create = True
+
+    if should_create:
         # 对话不存在或 ID 格式无效时自动创建新对话
         try:
-            new_id = chat_manager.create_conversation(title="新对话")
+            new_id = chat_manager.create_conversation(
+                title="新对话", user_id=current_user["user_id"]
+            )
             conversation_id = new_id
         except Exception as e:
             async def error_gen():

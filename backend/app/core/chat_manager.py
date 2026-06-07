@@ -16,6 +16,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from pydantic import ValidationError
+
 from core.config import settings
 from models.schemas import (
     ConversationInStorage,
@@ -136,8 +138,13 @@ class ChatManager:
         if not file_path.exists():
             raise ConversationNotFoundError(f"Conversation not found: {conversation_id}")
 
-        with open(file_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        except json.JSONDecodeError as e:
+            raise ConversationNotFoundError(
+                f"Conversation data corrupted (JSON parse error): {conversation_id}"
+            ) from e
 
         # 解析 datetime 字段
         for key in ['created_at', 'updated_at']:
@@ -148,7 +155,12 @@ class ChatManager:
             if msg.get('created_at'):
                 msg['created_at'] = datetime.fromisoformat(msg['created_at'])
 
-        return ConversationInStorage(**data)
+        try:
+            return ConversationInStorage(**data)
+        except ValidationError as e:
+            raise ConversationNotFoundError(
+                f"Conversation data corrupted (schema validation error): {conversation_id}"
+            ) from e
 
     def _save_conversation(self, conversation: ConversationInStorage) -> None:
         """保存对话数据
@@ -194,11 +206,52 @@ class ChatManager:
         conversations.sort(key=lambda x: x.updated_at, reverse=True)
         return conversations
 
-    def create_conversation(self, title: str = "新对话") -> str:
+    def list_conversations_by_user(self, user_id: str) -> List[ConversationSummary]:
+        """获取指定用户的对话列表，按 updated_at 倒序排列
+
+        只返回 user_id 与当前用户匹配的对话（严格多用户隔离）。
+
+        Args:
+            user_id: 用户 ID
+
+        Returns:
+            List[ConversationSummary]: 对话列表
+        """
+        conversations = []
+
+        for json_file in self.data_path.glob("*.json"):
+            try:
+                with open(json_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+
+                # 严格过滤：只返回 user_id 完全匹配的对话
+                conv_user_id = data.get('user_id')
+                if conv_user_id != user_id:
+                    continue
+
+                updated_at = data.get('updated_at', '')
+                if updated_at:
+                    updated_at = datetime.fromisoformat(updated_at)
+
+                conversations.append(ConversationSummary(
+                    id=data['id'],
+                    title=data.get('title', '未命名对话'),
+                    kb_names=data.get('kb_names', []),
+                    updated_at=updated_at or datetime.now(),
+                    message_count=len(data.get('messages', [])),
+                ))
+            except (json.JSONDecodeError, KeyError, ValueError):
+                continue
+
+        conversations.sort(key=lambda x: x.updated_at, reverse=True)
+        return conversations
+
+    def create_conversation(self, title: str = "新对话", user_id: Optional[str] = None) -> str:
         """创建新对话
 
         Args:
             title: 对话标题
+            user_id: 所属用户 ID（可选，用于多用户隔离）
 
         Returns:
             str: 新创建对话的 ID
@@ -213,6 +266,7 @@ class ChatManager:
             created_at=now,
             updated_at=now,
             messages=[],
+            user_id=user_id,
         )
 
         self._save_conversation(conversation)
@@ -239,6 +293,7 @@ class ChatManager:
             created_at=conv.created_at,
             updated_at=conv.updated_at,
             messages=conv.messages,
+            user_id=conv.user_id,
         )
 
     def delete_conversation(self, conversation_id: str) -> None:
