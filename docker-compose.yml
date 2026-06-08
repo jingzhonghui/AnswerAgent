@@ -1,0 +1,20 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - "8765:8765"
+    volumes:
+      - /var/answeragent/knowledge:/app/knowledge
+      - /var/answeragent/data:/app/data
+      - /var/answeragent/env:/app/.env
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+    ports:
+      - "5577:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
