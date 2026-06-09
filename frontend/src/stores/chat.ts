@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { ConversationSummary, Message, FileSelection, FileRef } from '@/types'
+import type { ConversationSummary, Message, FileSelection, FileRef, ThinkingStep } from '@/types'
 import {
   getConversations,
   createConversation as apiCreateConversation,
@@ -17,6 +17,9 @@ export const useChatStore = defineStore('chat', () => {
   const activeMessages = ref<Message[]>([])
   const isLoading = ref(false)
   const isConversationLoading = ref(false)
+
+  // 深度思考：当前推理步骤列表（实时追加，流式结束后清空）
+  const thinkingSteps = ref<ThinkingStep[]>([])
 
   // 流式状态
   const isStreaming = ref(false)
@@ -50,6 +53,7 @@ export const useChatStore = defineStore('chat', () => {
       activeMessages.value = []
       matchedKbs.value = []
       selectedFiles.value = []
+      thinkingSteps.value = []
       return newConv.id
     } catch (error) {
       console.error('Failed to create conversation:', error)
@@ -64,6 +68,7 @@ export const useChatStore = defineStore('chat', () => {
     isConversationLoading.value = true
     matchedKbs.value = []
     selectedFiles.value = []
+    thinkingSteps.value = []
     try {
       const conversation = await getConversation(id)
       activeConversationId.value = id
@@ -86,6 +91,7 @@ export const useChatStore = defineStore('chat', () => {
         activeMessages.value = []
         matchedKbs.value = []
         selectedFiles.value = []
+        thinkingSteps.value = []
       }
       return true
     } catch (error) {
@@ -116,6 +122,7 @@ export const useChatStore = defineStore('chat', () => {
       activeMessages.value = []
       matchedKbs.value = []
       selectedFiles.value = []
+      thinkingSteps.value = []
     }
   }
 
@@ -132,6 +139,7 @@ export const useChatStore = defineStore('chat', () => {
     abortController = new AbortController()
     matchedKbs.value = []
     selectedFiles.value = []
+    thinkingSteps.value = []
 
     // 添加用户消息到本地
     const userMsg: Message = {
@@ -184,13 +192,21 @@ export const useChatStore = defineStore('chat', () => {
               activeMessages.value[idx].content += tokenContent
             }
           },
-          onAgentThink(action, input) {
-            // 深度思考中间步骤：追加到当前 assistant 消息中（用特殊标记包裹）
-            const idx = activeMessages.value.length - 1
-            if (activeMessages.value[idx]) {
-              const prefix = action === 'search' ? '🔍 搜索知识库' : `🤔 ${action}`
-              activeMessages.value[idx].content += `\n\n> **${prefix}**: ${input}\n\n`
-            }
+          onAgentThink(_step, thought, tool, toolInput) {
+            // 深度思考：记录推理步骤，追加到思考步骤列表
+            thinkingSteps.value.push({
+              type: 'action',
+              thought: thought || '',
+              tool: tool || '',
+              toolInput: toolInput || '',
+            })
+          },
+          onAgentObserve(_step, result) {
+            // 深度思考：记录工具执行结果
+            thinkingSteps.value.push({
+              type: 'observation',
+              result: result || '',
+            })
           },
           onDone(_messageId) {
             // 完成
@@ -214,6 +230,7 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       isStreaming.value = false
       abortController = null
+      // 思考步骤保留不立即清空（流式结束后用户仍可查看折叠面板）
       // 刷新对话列表以更新标题和时间
       await loadConversations()
     }
@@ -235,6 +252,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming.value = false
     matchedKbs.value = []
     selectedFiles.value = []
+    thinkingSteps.value = []
     abortController = null
   }
 
@@ -248,6 +266,7 @@ export const useChatStore = defineStore('chat', () => {
     isStreaming,
     matchedKbs,
     selectedFiles,
+    thinkingSteps,
     // 计算属性
     hasActiveConversation,
     // 方法

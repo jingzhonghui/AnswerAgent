@@ -53,3 +53,17 @@ export interface CreateConversationResponse {
 export interface RenameConversationRequest {
   title: string
 }
+
+/** 深度思考：单个推理步骤 */
+export interface ThinkingStep {
+  /** 'action' | 'observation' */
+  type: 'action' | 'observation'
+  /** 思考内容（仅 action） */
+  thought?: string
+  /** 工具名（仅 action） */
+  tool?: string
+  /** 工具输入（仅 action） */
+  toolInput?: string
+  /** 工具返回结果（仅 observation） */
+  result?: string
+}

@@ -7,17 +7,20 @@ POST /api/chat/stream
 2. 知识库路由 -> 发出 kb_matched
 3. 文件选取 -> 发出 files_selected（每个知识库一次）
 4. 构建 LCEL 链并流式输出 -> 发出 token*
+   深度思考模式额外发出 agent_think / agent_observe 事件
 5. 保存助手消息 -> 发出 done
 6. 异常 -> 发出 error
 
-支持 mode=default（LCEL 问答链）和 mode=agent（暂未实现）
+支持 mode=default（LCEL 问答链）和 mode=deep（ReAct Agent 深度思考）
 """
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import AsyncGenerator, Dict, List
+import re
+from typing import Any, AsyncGenerator, Dict, List, Optional
+from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request
 from sse_starlette.sse import EventSourceResponse
@@ -38,6 +41,8 @@ from core.chain_builder import (
 )
 from core.llm_factory import LLMConfigError
 from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.callbacks import BaseCallbackHandler
+from langchain_core.agents import AgentAction, AgentFinish
 from models.schemas import ChatStreamRequest
 
 logger = logging.getLogger("app.api.chat")
@@ -106,6 +111,85 @@ async def _stream_default(
     return
 
 
+# ============================================================
+# 深度思考回调处理器 — 桥接同步 Agent 回调与异步 SSE 流
+# ============================================================
+
+class _DeepThinkingCallback(BaseCallbackHandler):
+    """捕获 Agent 每一步 Thought/Action/Observation 并推入 asyncio.Queue。"""
+
+    def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+        super().__init__()
+        self._queue = queue
+        self._loop = loop
+
+    def on_agent_action(
+        self,
+        action: AgentAction,
+        **kwargs: Any,
+    ) -> None:
+        """Agent 决定执行某个工具时触发"""
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait,
+            {
+                "event": "agent_think",
+                "data": json.dumps(
+                    {
+                        "step": "action",
+                        "thought": getattr(action, "log", "") or "",
+                        "tool": action.tool,
+                        "tool_input": str(action.tool_input),
+                    },
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+    def on_tool_end(
+        self,
+        output: str,
+        **kwargs: Any,
+    ) -> None:
+        """工具执行完毕时触发（Observation）"""
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait,
+            {
+                "event": "agent_observe",
+                "data": json.dumps(
+                    {"step": "observation", "result": output},
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+    def on_agent_finish(
+        self,
+        finish: AgentFinish,
+        **kwargs: Any,
+    ) -> None:
+        """Agent 完成时触发 — 推送最终回答"""
+        output = finish.return_values.get("output", "")
+        self._loop.call_soon_threadsafe(
+            self._queue.put_nowait,
+            {
+                "event": "agent_finish",
+                "data": json.dumps(
+                    {"output": output},
+                    ensure_ascii=False,
+                ),
+            },
+        )
+
+
+def _clean_thought(log_text: str) -> str:
+    """从 AgentAction.log 中提取纯思考文本，去掉 Action/Action Input 行"""
+    if not log_text:
+        return ""
+    # 去掉 "Action: ..." 和 "Action Input: ..." 行，保留前面的 Thought 或纯文本
+    cleaned = re.split(r'\n\s*(?:Action|Thought)\s*:', log_text, maxsplit=1)[0].strip()
+    return cleaned
+
+
 async def _stream_deep(
     request: Request,
     conversation_id: str,
@@ -114,12 +198,16 @@ async def _stream_deep(
     formatted_history: list,
     kb_names: List[str],
     all_files: List[str],
-) -> str:
-    """深度思考模式：使用 ReAct Agent 流式输出"""
-    chain = build_deep_chain(context)
-    full_response = ""
+) -> AsyncGenerator[Dict[str, str], None]:
+    """深度思考模式：使用 ReAct Agent 流式输出
 
-    # 将格式化后的对话历史转为字符串（React PromptTemplate 需要字符串）
+    通过回调 + asyncio.Queue 实时推送 Agent 的思考过程：
+    - agent_think: Agent 的推理/行动决策
+    - agent_observe: 工具执行结果
+    - agent_finish: 最终回答（作为 token 发出）
+    - error: 异常
+    """
+    # 将格式化后的对话历史转为字符串
     chat_history_str = ""
     for msg in formatted_history:
         if isinstance(msg, HumanMessage):
@@ -127,23 +215,78 @@ async def _stream_deep(
         elif isinstance(msg, AIMessage):
             chat_history_str += f"AI: {msg.content}\n"
 
-    try:
-        result = await asyncio.get_event_loop().run_in_executor(
-            None,
-            lambda: chain.invoke({
+    queue: asyncio.Queue = asyncio.Queue()
+    callback = _DeepThinkingCallback(queue, asyncio.get_event_loop())
+    chain = build_deep_chain(context, callbacks=[callback])
+
+    def _run_agent():
+        """在 executor 线程中同步执行 Agent"""
+        try:
+            chain.invoke({
                 "input": message,
                 "chat_history": chat_history_str,
             })
-        )
-        output_text = result.get("output", "") if isinstance(result, dict) else str(result)
-        if output_text:
-            full_response = output_text
-            yield {
-                "event": "token",
-                "data": json.dumps({"content": output_text}, ensure_ascii=False),
-            }
+        except Exception:
+            # 异常通过 sentinel 传回主循环
+            raise
+
+    # 在 executor 中启动 Agent（不 await，让它后台跑）
+    task = asyncio.get_event_loop().run_in_executor(None, _run_agent)
+
+    try:
+        while True:
+            # 非阻塞等待队列事件，同时检查 executor 是否已完成
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=0.2)
+            except asyncio.TimeoutError:
+                # 超时：检查 executor 是否已完成
+                if task.done():
+                    # executor 已完成但可能有残留事件
+                    while not queue.empty():
+                        event = queue.get_nowait()
+                        yield event
+                    # 检查 executor 是否抛了异常
+                    exc = task.exception()
+                    if exc:
+                        logger.exception("Deep chain invoke failed")
+                        yield {
+                            "event": "error",
+                            "data": json.dumps(
+                                {"message": f"深度思考执行失败: {exc}"},
+                                ensure_ascii=False,
+                            ),
+                        }
+                    return
+                # 还在运行，继续等待
+                if await request.is_disconnected():
+                    task.cancel()
+                    return
+                continue
+
+            # 收到 agent_finish 事件 → 转为 token 发出
+            if event["event"] == "agent_finish":
+                data = json.loads(event["data"])
+                output_text = data.get("output", "")
+                if output_text:
+                    yield {
+                        "event": "token",
+                        "data": json.dumps({"content": output_text}, ensure_ascii=False),
+                    }
+                continue
+
+            # 收到 error 事件
+            if event["event"] == "error":
+                yield event
+                continue
+
+            # agent_think / agent_observe → 直接透传给前端
+            yield event
+
+    except asyncio.CancelledError:
+        task.cancel()
+        raise
     except Exception as e:
-        logger.exception("Deep chain invoke failed")
+        logger.exception("Deep stream error")
         yield {
             "event": "error",
             "data": json.dumps(
@@ -151,8 +294,6 @@ async def _stream_deep(
                 ensure_ascii=False,
             ),
         }
-
-    return
 
 
 async def _stream_events(
@@ -238,7 +379,6 @@ async def _stream_events(
         formatted_history = format_history(history)
 
         # --- 4. 流式输出（按 mode 分发） ---
-        # 子函数通过 yield 发送 token 事件，通过闭包收集 full_response
         full_response = ""
         _collector = [""]  # 闭包收集 full_response
 
@@ -256,6 +396,7 @@ async def _stream_events(
         async for event in gen:
             if event["event"] == "token":
                 _collector[0] += json.loads(event["data"]).get("content", "")
+            # agent_think / agent_observe 事件直接透传给前端
             yield event
 
         full_response = _collector[0]

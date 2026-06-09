@@ -5,6 +5,7 @@ import hljs from 'highlight.js'
 import mermaid from 'mermaid'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
+import type { ThinkingStep } from '@/types'
 const authStore = useAuthStore()
 const chatStore = useChatStore()
 
@@ -288,6 +289,39 @@ function getMsgTimestamp(msg: { timestamp?: string; created_at?: string }): stri
 const showKbStatus = computed(() => {
   return chatStore.isStreaming && chatStore.matchedKbs.length > 0
 })
+
+// 深度思考面板：是否展开
+const thinkingExpanded = ref(false)
+// 流式进行中自动展开，结束后可折叠
+watch(
+  () => chatStore.isStreaming,
+  (streaming) => {
+    if (streaming) {
+      thinkingExpanded.value = true
+    }
+  },
+)
+
+function toggleThinking(): void {
+  thinkingExpanded.value = !thinkingExpanded.value
+}
+
+/** 格式化思考步骤为可读文本 */
+function formatThinkingStep(step: ThinkingStep): string {
+  if (step.type === 'action') {
+    const lines: string[] = []
+    if (step.thought) {
+      lines.push(step.thought)
+    }
+    if (step.tool) {
+      lines.push(`**操作**: \`${step.tool}\``)
+      lines.push(`**输入**: ${step.toolInput}`)
+    }
+    return lines.join('\n\n')
+  }
+  // observation
+  return `**结果**: ${step.result}`
+}
 </script>
 
 <template>
@@ -357,13 +391,57 @@ const showKbStatus = computed(() => {
                 <span class="message-author">Answer Agent</span>
                 <span class="message-time">{{ formatTime(getMsgTimestamp(msg)) }}</span>
               </div>
+
+              <!-- 深度思考面板 -->
+              <div
+                v-if="chatStore.thinkingSteps.length > 0 && index === chatStore.activeMessages.length - 1"
+                class="thinking-panel"
+              >
+                <div class="thinking-header" @click="toggleThinking">
+                  <svg
+                    class="thinking-chevron"
+                    :class="{ expanded: thinkingExpanded }"
+                    viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                  >
+                    <polyline points="9 18 15 12 9 6"/>
+                  </svg>
+                  <span class="thinking-title">
+                    🤔 深度思考中...
+                    <span class="thinking-step-count">
+                      ({{ chatStore.thinkingSteps.filter(s => s.type === 'action').length }} 步推理)
+                    </span>
+                  </span>
+                  <span v-if="chatStore.isStreaming" class="thinking-spinner"></span>
+                </div>
+                <div v-show="thinkingExpanded" class="thinking-body">
+                  <div
+                    v-for="(step, si) in chatStore.thinkingSteps"
+                    :key="si"
+                    class="thinking-step"
+                    :class="step.type"
+                  >
+                    <div class="thinking-step-header">
+                      <span class="step-badge" :class="step.type">
+                        {{ step.type === 'action' ? '💡 推理' : '📋 结果' }}
+                      </span>
+                      <span v-if="step.tool" class="step-tool">{{ step.tool }}</span>
+                    </div>
+                    <div
+                      class="thinking-step-content markdown-body"
+                      v-html="renderMarkdown(formatThinkingStep(step))"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+
               <div class="message-bubble assistant-bubble">
                 <div
+                  v-if="msg.content"
                   class="message-text markdown-body"
                   v-html="renderMarkdown(msg.content)"
                 />
                 <span
-                  v-if="chatStore.isStreaming && index === chatStore.activeMessages.length - 1"
+                  v-if="chatStore.isStreaming && index === chatStore.activeMessages.length - 1 && !chatStore.thinkingSteps.length"
                   class="streaming-cursor"
                 >▌</span>
               </div>
@@ -873,5 +951,153 @@ const showKbStatus = computed(() => {
   .message-body {
     max-width: 85%;
   }
+}
+
+/* ===== 深度思考面板 ===== */
+.thinking-panel {
+  margin-bottom: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  overflow: hidden;
+  max-width: 100%;
+}
+
+.thinking-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
+}
+
+.thinking-header:hover {
+  background: var(--bg-hover);
+}
+
+.thinking-chevron {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  transition: transform 0.2s;
+}
+
+.thinking-chevron.expanded {
+  transform: rotate(90deg);
+}
+
+.thinking-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.thinking-step-count {
+  font-weight: 400;
+  color: var(--text-tertiary);
+  font-size: 12px;
+}
+
+.thinking-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--border-color);
+  border-top-color: var(--accent-color);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+.thinking-body {
+  border-top: 1px solid var(--border-color);
+  padding: 8px 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.thinking-step {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border-color);
+}
+
+.thinking-step:last-child {
+  margin-bottom: 0;
+  padding-bottom: 0;
+  border-bottom: none;
+}
+
+.thinking-step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.step-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  border-radius: var(--radius-full);
+  line-height: 1.6;
+}
+
+.step-badge.action {
+  background: rgba(139, 92, 246, 0.12);
+  color: #8b5cf6;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+}
+
+.step-badge.observation {
+  background: rgba(16, 185, 129, 0.12);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+}
+
+.step-tool {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: monospace;
+  background: var(--bg-hover);
+  padding: 1px 6px;
+  border-radius: var(--radius-sm);
+}
+
+.thinking-step-content {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+
+.thinking-step-content :deep(p) {
+  margin: 0 0 4px;
+}
+
+.thinking-step-content :deep(p:last-child) {
+  margin-bottom: 0;
+}
+
+.thinking-step-content :deep(code) {
+  font-size: 12px;
+  padding: 1px 4px;
+  background: var(--bg-hover);
+  border-radius: 3px;
+}
+
+.thinking-step-content :deep(strong) {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 暗色主题下 badge 调整 */
+[data-theme="dark"] .step-badge.action {
+  background: rgba(139, 92, 246, 0.18);
+}
+
+[data-theme="dark"] .step-badge.observation {
+  background: rgba(16, 185, 129, 0.18);
 }
 </style>

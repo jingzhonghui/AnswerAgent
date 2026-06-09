@@ -3,7 +3,8 @@
 构建三种问答链:
 - 知识库问答链: 注入合并上下文 + 对话历史 + 当前问题
 - 通用问答链: 无知识库命中时，只注入对话历史和问题
-- 深度思考链: 使用推理模型 + ReAct Agent 模式，支持多步推理
+- 深度思考链: 使用推理模型 + ReAct Agent 模式，支持多步推理；
+  通过 callbacks 参数实时推送中间步骤（Thought/Action/Observation）
 
 使用 LangChain LCEL (LangChain Expression Language) 构建，
 通过 .stream() 实现逐 token 流式输出。
@@ -212,16 +213,17 @@ def _build_knowledge_search_tool(kb_context: str):
     return knowledge_search
 
 
-def build_deep_chain(context: str):
+def build_deep_chain(context: str, callbacks: list = None):
     """构建深度思考 ReAct Agent 链
 
     使用推理模型 + ReAct Agent 模式，支持多步推理-观察-行动循环。
 
     Args:
         context: 合并后的知识库上下文（若为空则 Agent 只依赖通用知识）
+        callbacks: LangChain 回调处理器列表，用于实时捕获 Agent 中间步骤
 
     Returns:
-        AgentExecutor: 可调用 chain.invoke({"question": ..., "chat_history": [...]})
+        AgentExecutor: 可调用 chain.invoke({"input": ..., "chat_history": [...]})
     """
     llm = create_chat_llm(streaming=True, reasoning=True)
     kb_tool = _build_knowledge_search_tool(context)
@@ -235,14 +237,14 @@ def build_deep_chain(context: str):
 {chat_history}
 
 ## 用户问题
-{question}
+{input}
 
 ## 之前的尝试
 {agent_scratchpad}"""
 
     prompt = PromptTemplate(
         template=template,
-        input_variables=["tools", "tool_names", "question", "chat_history", "agent_scratchpad"],
+        input_variables=["tools", "tool_names", "input", "chat_history", "agent_scratchpad"],
     )
 
     agent = create_react_agent(llm, tools, prompt)
@@ -253,4 +255,5 @@ def build_deep_chain(context: str):
         handle_parsing_errors=True,
         max_iterations=8,
         early_stopping_method="generate",
+        callbacks=callbacks or None,
     )

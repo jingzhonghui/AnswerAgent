@@ -76,7 +76,10 @@ export interface StreamChatHandlers {
   onToken: (content: string) => void
   onDone: (messageId: string) => void
   onError: (message: string) => void
-  onAgentThink?: (action: string, input: string) => void
+  /** 深度思考：Agent 推理/行动决策 */
+  onAgentThink?: (step: string, thought: string, tool: string, toolInput: string) => void
+  /** 深度思考：工具执行结果 */
+  onAgentObserve?: (step: string, result: string) => void
 }
 
 export async function streamChat(
@@ -115,7 +118,15 @@ export async function streamChat(
             handlers.onDone(data.message_id || '')
             break
           case 'agent_think':
-            handlers.onAgentThink?.(data.action || '', data.input || '')
+            handlers.onAgentThink?.(
+              data.step || '',
+              data.thought || '',
+              data.tool || '',
+              data.tool_input || '',
+            )
+            break
+          case 'agent_observe':
+            handlers.onAgentObserve?.(data.step || '', data.result || '')
             break
           case 'error':
             handlers.onError(data.message || '未知错误')
