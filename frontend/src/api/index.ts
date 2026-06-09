@@ -76,6 +76,7 @@ export interface StreamChatHandlers {
   onToken: (content: string) => void
   onDone: (messageId: string) => void
   onError: (message: string) => void
+  onAgentThink?: (action: string, input: string) => void
 }
 
 export async function streamChat(
@@ -112,6 +113,9 @@ export async function streamChat(
             break
           case 'done':
             handlers.onDone(data.message_id || '')
+            break
+          case 'agent_think':
+            handlers.onAgentThink?.(data.action || '', data.input || '')
             break
           case 'error':
             handlers.onError(data.message || '未知错误')

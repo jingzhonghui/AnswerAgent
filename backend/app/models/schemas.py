@@ -71,7 +71,7 @@ class ChatStreamRequest(BaseModel):
     """Request for SSE streaming chat."""
     conversation_id: str = Field(..., description="Conversation UUID")
     message: str = Field(..., min_length=1, description="User message content")
-    mode: str = Field(default="default", description="Chat mode: 'default' or 'agent'")
+    mode: str = Field(default="default", description="Chat mode: 'default', 'deep', or 'agent'")
 
 
 class SseKbMatched(BaseModel):

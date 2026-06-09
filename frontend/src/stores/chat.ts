@@ -120,7 +120,7 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   // 发送消息（SSE 流式）
-  async function sendMessage(content: string): Promise<void> {
+  async function sendMessage(content: string, mode: string = 'default'): Promise<void> {
     if (!activeConversationId.value) {
       const newId = await createConversation()
       if (!newId) return
@@ -155,7 +155,7 @@ export const useChatStore = defineStore('chat', () => {
         {
           conversation_id: activeConversationId.value,
           message: content,
-          mode: 'default',
+          mode: mode,
         },
         {
           onKbMatched(kbNames) {
@@ -182,6 +182,14 @@ export const useChatStore = defineStore('chat', () => {
             const idx = activeMessages.value.length - 1
             if (activeMessages.value[idx]) {
               activeMessages.value[idx].content += tokenContent
+            }
+          },
+          onAgentThink(action, input) {
+            // 深度思考中间步骤：追加到当前 assistant 消息中（用特殊标记包裹）
+            const idx = activeMessages.value.length - 1
+            if (activeMessages.value[idx]) {
+              const prefix = action === 'search' ? '🔍 搜索知识库' : `🤔 ${action}`
+              activeMessages.value[idx].content += `\n\n> **${prefix}**: ${input}\n\n`
             }
           },
           onDone(_messageId) {

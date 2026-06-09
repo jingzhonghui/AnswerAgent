@@ -48,10 +48,11 @@ vi .env
 最小配置需要以下项：
 
 ```ini
-# LLM API 密钥（至少一个）
-OPENAI_API_KEY=sk-your-key-here
-# 或
-ANTHROPIC_API_KEY=sk-ant-your-key-here
+# LLM 提供商选择：openai | anthropic
+LLM_PROVIDER=openai
+
+# API 密钥
+API_KEY=sk-your-key-here
 
 # JWT 密钥（务必修改为随机字符串）
 JWT_SECRET_KEY=<生成一个随机字符串，建议 32 位以上>
@@ -531,20 +532,21 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 | 变量 | 必需 | 默认值 | 说明 |
 |------|------|--------|------|
 | `LLM_PROVIDER` | 是 | `openai` | LLM 提供商：`openai` 或 `anthropic` |
-| `OPENAI_API_KEY` | 条件必需* | — | OpenAI 兼容 API 密钥 |
-| `OPENAI_BASE_URL` | 否 | — | OpenAI 兼容 API 地址（如 DeepSeek） |
-| `OPENAI_MODEL` | 否 | `gpt-4o` | 模型名称 |
-| `ANTHROPIC_API_KEY` | 条件必需* | — | Anthropic API 密钥 |
-| `ANTHROPIC_BASE_URL` | 否 | — | Anthropic API 地址 |
-| `ANTHROPIC_MODEL` | 否 | `claude-3-5-sonnet-20241022` | 模型名称 |
+| `API_KEY` | **是** | — | API 密钥（OpenAI 或 Anthropic，由 `LLM_PROVIDER` 决定协议） |
+| `BASE_URL` | 否 | — | API 地址（OpenAI 兼容 API 如 DeepSeek 需填写；Anthropic 可留空） |
+| `MODEL` | 否 | `gpt-4o` | 模型名称 |
 | `KNOWLEDGE_PATH` | 否 | `./knowledge` | 知识库目录路径 |
 | `DATA_PATH` | 否 | `./data/conversations` | 对话 JSON 文件存储路径 |
 | `HISTORY_WINDOW` | 否 | `10` | 保留的对话历史轮数 |
 | `JWT_SECRET_KEY` | **是** | — | JWT 签名密钥（生产环境务必修改） |
 | `JWT_ALGORITHM` | 否 | `HS256` | JWT 签名算法 |
 | `JWT_EXPIRE_MINUTES` | 否 | `1440` | JWT 过期时间（分钟） |
-
-> *`OPENAI_API_KEY` 和 `ANTHROPIC_API_KEY` 至少配置一个，取决于 `LLM_PROVIDER` 的选择。
+| `DEEP_MODEL_ENABLED` | 否 | `true` | 是否启用深度思考（推理）模型 |
+| `DEEP_LLM_PROVIDER` | 否 | — | 推理模型 provider，空则复用 `LLM_PROVIDER` |
+| `DEEP_API_KEY` | 否 | — | 推理模型 API key，空则复用 `API_KEY` |
+| `DEEP_BASE_URL` | 否 | — | 推理模型 API 地址，空则复用 `BASE_URL` |
+| `DEEP_MODEL` | 否 | `o1-mini` | 推理模型名称 |
+| `DEEP_TEMPERATURE` | 否 | `0.1` | 推理模型采样温度 |
 
 ### 端口映射
 

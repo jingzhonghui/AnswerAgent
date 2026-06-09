@@ -33,9 +33,11 @@ from core.file_loader import select_and_load_files, LoadedFile
 from core.chain_builder import (
     build_kb_chain,
     build_general_chain,
+    build_deep_chain,
     format_history,
 )
 from core.llm_factory import LLMConfigError
+from langchain_core.messages import AIMessage, HumanMessage
 from models.schemas import ChatStreamRequest
 
 logger = logging.getLogger("app.api.chat")
@@ -57,6 +59,102 @@ def _merge_context(loaded_files: List[LoadedFile]) -> str:
     return "\n\n".join(parts)
 
 
+async def _stream_default(
+    request: Request,
+    conversation_id: str,
+    context: str,
+    message: str,
+    formatted_history: list,
+    kb_names: List[str],
+    all_files: List[str],
+) -> str:
+    """默认模式（非深度思考）：使用 LCEL 问答链流式输出
+
+    此函数直接 yield token 事件；return 用于返回 full_response，
+    但 async generator 不能 return value，因此通过修改外层 dict 来返回。
+    """
+    full_response = ""
+
+    if context:
+        chain = build_kb_chain(context, streaming=True)
+    else:
+        chain = build_general_chain(streaming=True)
+
+    for chunk in chain.stream({
+        "question": message,
+        "history": formatted_history,
+    }):
+        if await request.is_disconnected():
+            if full_response.strip():
+                try:
+                    chat_manager.append_assistant_message(
+                        conversation_id,
+                        full_response + "\n\n*(用户已停止生成)*",
+                        kb_names=kb_names if kb_names else None,
+                        files_used=all_files if all_files else None,
+                    )
+                except Exception:
+                    pass
+            return
+
+        full_response += chunk
+        yield {
+            "event": "token",
+            "data": json.dumps({"content": chunk}, ensure_ascii=False),
+        }
+
+    return
+
+
+async def _stream_deep(
+    request: Request,
+    conversation_id: str,
+    context: str,
+    message: str,
+    formatted_history: list,
+    kb_names: List[str],
+    all_files: List[str],
+) -> str:
+    """深度思考模式：使用 ReAct Agent 流式输出"""
+    chain = build_deep_chain(context)
+    full_response = ""
+
+    # 将格式化后的对话历史转为字符串（React PromptTemplate 需要字符串）
+    chat_history_str = ""
+    for msg in formatted_history:
+        if isinstance(msg, HumanMessage):
+            chat_history_str += f"Human: {msg.content}\n"
+        elif isinstance(msg, AIMessage):
+            chat_history_str += f"AI: {msg.content}\n"
+
+    try:
+        result = await asyncio.get_event_loop().run_in_executor(
+            None,
+            lambda: chain.invoke({
+                "input": message,
+                "chat_history": chat_history_str,
+            })
+        )
+        output_text = result.get("output", "") if isinstance(result, dict) else str(result)
+        if output_text:
+            full_response = output_text
+            yield {
+                "event": "token",
+                "data": json.dumps({"content": output_text}, ensure_ascii=False),
+            }
+    except Exception as e:
+        logger.exception("Deep chain invoke failed")
+        yield {
+            "event": "error",
+            "data": json.dumps(
+                {"message": f"深度思考执行失败: {e}"},
+                ensure_ascii=False,
+            ),
+        }
+
+    return
+
+
 async def _stream_events(
     request: Request,
     conversation_id: str,
@@ -76,12 +174,12 @@ async def _stream_events(
     full_response = ""
 
     try:
-        # --- 0. 检测 mode=agent ---
+        # --- 0. 检测 mode=agent（未实现） ---
         if mode == "agent":
             yield {
                 "event": "error",
                 "data": json.dumps(
-                    {"message": "Agent 模式尚未实现，请使用 mode=default"},
+                    {"message": "Agent 模式尚未实现，请使用 mode=default 或 mode=deep"},
                     ensure_ascii=False,
                 ),
             }
@@ -131,7 +229,7 @@ async def _stream_events(
                         ),
                     }
 
-        # --- 3. 构建上下文和链 ---
+        # --- 3. 构建上下文 ---
         context = _merge_context(all_loaded) if all_loaded else ""
 
         history = chat_manager.get_recent_history(
@@ -139,36 +237,28 @@ async def _stream_events(
         )
         formatted_history = format_history(history)
 
-        if context:
-            chain = build_kb_chain(context, streaming=True)
-        else:
-            chain = build_general_chain(streaming=True)
-
-        # --- 4. 流式输出 ---
+        # --- 4. 流式输出（按 mode 分发） ---
+        # 子函数通过 yield 发送 token 事件，通过闭包收集 full_response
         full_response = ""
-        for chunk in chain.stream({
-            "question": message,
-            "history": formatted_history,
-        }):
-            if await request.is_disconnected():
-                # 客户端断开，保存已生成的部分内容
-                if full_response.strip():
-                    try:
-                        chat_manager.append_assistant_message(
-                            conversation_id,
-                            full_response + "\n\n*(用户已停止生成)*",
-                            kb_names=kb_names if kb_names else None,
-                            files_used=all_files if all_files else None,
-                        )
-                    except Exception:
-                        pass
-                return
+        _collector = [""]  # 闭包收集 full_response
 
-            full_response += chunk
-            yield {
-                "event": "token",
-                "data": json.dumps({"content": chunk}, ensure_ascii=False),
-            }
+        if mode == "deep":
+            gen = _stream_deep(
+                request, conversation_id, context, message, formatted_history,
+                kb_names, all_files,
+            )
+        else:
+            gen = _stream_default(
+                request, conversation_id, context, message, formatted_history,
+                kb_names, all_files,
+            )
+
+        async for event in gen:
+            if event["event"] == "token":
+                _collector[0] += json.loads(event["data"]).get("content", "")
+            yield event
+
+        full_response = _collector[0]
 
         # --- 5. 持久化助手消息 ---
         chat_manager.append_assistant_message(

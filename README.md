@@ -85,15 +85,10 @@ AnswerAgent 的 SSE 协议有哪些事件类型？
 # LLM 提供商选择：openai | anthropic
 LLM_PROVIDER=openai
 
-# OpenAI 兼容配置（支持 DeepSeek、通义千问等）
-OPENAI_API_KEY=sk-xxx
-OPENAI_BASE_URL=https://api.deepseek.com/v1
-OPENAI_MODEL=deepseek-v4-flash
-
-# Anthropic 配置
-ANTHROPIC_API_KEY=sk-ant-xxx
-ANTHROPIC_BASE_URL=
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+# 默认模型配置（OpenAI 或 Anthropic，由 LLM_PROVIDER 决定协议）
+API_KEY=sk-xxx
+BASE_URL=https://api.deepseek.com/v1
+MODEL=deepseek-v4-flash
 
 # 路径配置
 KNOWLEDGE_PATH=./knowledge
@@ -103,7 +98,7 @@ DATA_PATH=./data/conversations
 HISTORY_WINDOW=10
 ```
 
-**注意**：使用 OpenAI 兼容 API 时（如 DeepSeek、通义千问），设置 `OPENAI_BASE_URL` 为对应服务地址，`LLM_PROVIDER=openai`。
+**注意**：使用 OpenAI 兼容 API 时（如 DeepSeek、通义千问），设置 `LLM_PROVIDER=openai`，配置 `API_KEY` 和 `BASE_URL` 为对应服务地址。切换到 Anthropic 时也使用相同的 `API_KEY`/`BASE_URL`/`MODEL` 字段，`LLM_PROVIDER` 会自动选择对应协议。
 
 ## 知识库结构
 

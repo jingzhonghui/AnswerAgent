@@ -9,18 +9,11 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     """Application settings loaded from environment/.env file."""
 
-    # LLM Provider
-    llm_provider: str = "openai"  # openai | anthropic
-
-    # OpenAI Configuration
-    openai_api_key: str = ""
-    openai_base_url: str = ""
-    openai_model: str = "gpt-4o"
-
-    # Anthropic Configuration
-    anthropic_api_key: str = ""
-    anthropic_base_url: str = ""
-    anthropic_model: str = "claude-3-5-sonnet-20241022"
+    # LLM Provider（默认模型）
+    llm_provider: str = "openai"  # "openai" | "anthropic"
+    api_key: str = ""
+    base_url: str = ""
+    model: str = "gpt-4o"
 
     # Paths
     knowledge_path: str = "./knowledge"
@@ -28,6 +21,14 @@ class Settings(BaseSettings):
 
     # Chat settings
     history_window: int = 10  # Number of conversation rounds to keep
+
+    # Deep thinking (reasoning) model — 完全独立配置，可与默认模型不同 provider
+    deep_model_enabled: bool = True
+    deep_llm_provider: str = ""  # "openai" | "anthropic"，空则复用 llm_provider
+    deep_api_key: str = ""
+    deep_base_url: str = ""
+    deep_model: str = "o1-mini"
+    deep_temperature: float = 0.1
 
     # JWT 认证配置
     jwt_secret_key: str = "change-me-in-production"
@@ -43,7 +44,6 @@ class Settings(BaseSettings):
 
     def get_knowledge_path(self) -> Path:
         """Get absolute path to knowledge directory."""
-        # If path is relative, resolve it relative to the backend root
         backend_root = Path(__file__).parent.parent.parent
         path = Path(self.knowledge_path)
         if not path.is_absolute():
@@ -52,8 +52,6 @@ class Settings(BaseSettings):
 
     def get_data_path(self) -> Path:
         """Get absolute path to conversations data directory."""
-        # If path is relative, resolve it relative to the backend root
-        # Backend root is 2 levels up from this file (core/config.py -> app -> backend)
         backend_root = Path(__file__).parent.parent.parent
         path = Path(self.data_path)
         if not path.is_absolute():

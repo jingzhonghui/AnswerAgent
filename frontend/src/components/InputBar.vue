@@ -11,7 +11,7 @@ async function handleSend() {
   if (!text || chatStore.isStreaming) return
 
   inputText.value = ''
-  await chatStore.sendMessage(text)
+  await chatStore.sendMessage(text, isDeepMode.value ? 'deep' : 'default')
 }
 
 function handleKeydown(event: KeyboardEvent) {
