@@ -38,7 +38,7 @@ from core.chain_builder import (
 from core.llm_factory import LLMConfigError
 from models.schemas import ChatStreamRequest
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("app.api.chat")
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
 

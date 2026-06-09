@@ -29,6 +29,20 @@ KB_SYSTEM_TEMPLATE = """\
 4. 如果参考文件内容与问题无关，忽略它并基于通用知识回答。
 5. 回答要简洁、准确，避免冗长。
 
+## 输出格式指令（必须遵守）
+根据内容特点选择以下格式，不得用纯文本段落替代：
+
+| 内容类型 | 必须使用的格式 |
+|---------|--------------|
+| 对比或列举 | Markdown 表格 |
+| 流程、架构、时序 | ` ```mermaid ` 代码块 |
+| 数据统计或比例 | ` ```mermaid ` 代码块 |
+| 代码示例 | ` ```language ` 代码块 |
+| 分步骤说明 | 有序列表或 Mermaid 流程图 |
+| 术语强调 | **加粗** 或 `行内代码` |
+
+可用 Mermaid 类型：graph、flowchart、sequenceDiagram、classDiagram、pie、mindmap
+
 ## 参考文件内容
 {context}"""
 
@@ -37,7 +51,21 @@ GENERAL_SYSTEM_TEMPLATE = """\
 
 ## 规则
 1. 回答要简洁、准确，避免冗长。
-2. 如果问题超出你的知识范围，诚实说明。"""
+2. 如果问题超出你的知识范围，诚实说明。
+
+## 输出格式指令（必须遵守）
+根据内容特点选择以下格式，不得用纯文本段落替代：
+
+| 内容类型 | 必须使用的格式 |
+|---------|--------------|
+| 对比或列举 | Markdown 表格 |
+| 流程、架构、时序 | ` ```mermaid ` 代码块 |
+| 数据统计或比例 | ` ```mermaid ` 代码块 |
+| 代码示例 | ` ```language ` 代码块 |
+| 分步骤说明 | 有序列表或 Mermaid 流程图 |
+| 术语强调 | **加粗** 或 `行内代码` |
+
+可用 Mermaid 类型：graph、flowchart、sequenceDiagram、classDiagram、pie、mindmap"""
 
 
 def build_kb_chain(context: str, streaming: bool = True):
@@ -77,7 +105,7 @@ def build_general_chain(streaming: bool = True):
         ("human", "{question}"),
     ])
 
-    llm = create_chat_llm(streaming=streaming, temperature=0.5)
+    llm = create_chat_llm(streaming=streaming, temperature=0.3)
 
     chain = prompt | llm | StrOutputParser()
     return chain

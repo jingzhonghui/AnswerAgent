@@ -1,3 +1,6 @@
+import logging
+import sys
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
@@ -5,6 +8,16 @@ import uvicorn
 from core.config import settings
 from core.database import init_db
 from api import conversations, knowledge_bases, chat, auth
+
+
+# 配置统一日志
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    stream=sys.stdout,
+    force=True,
+)
+logger = logging.getLogger(__name__)
 
 
 # 创建 FastAPI 应用

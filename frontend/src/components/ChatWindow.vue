@@ -2,10 +2,19 @@
 import { computed, ref, watch, nextTick, onMounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
+import mermaid from 'mermaid'
 import { useAuthStore } from '@/stores/auth'
 import { useChatStore } from '@/stores/chat'
 const authStore = useAuthStore()
 const chatStore = useChatStore()
+
+// 初始化 mermaid（默认配置，后续在渲染时覆盖 theme）
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'default',
+  flowchart: { useMaxWidth: true },
+  sequence: { useMaxWidth: true },
+})
 
 // 消息列表容器引用和自动滚动逻辑
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -32,40 +41,71 @@ function handleScroll(): void {
   }
 }
 
-// 监听消息内容变化：生成中自动滚动
+// 监听消息内容变化：生成中自动滚动，完成后渲染 mermaid
 watch(
   () => chatStore.activeMessages.map(m => m.content),
   () => {
     if (chatStore.isStreaming && !userScrolledUp.value) {
       nextTick(() => scrollToBottom(false))
+    } else if (!chatStore.isStreaming) {
+      nextTick(() => onMessageRendered())
     }
   },
   { deep: false },
 )
 
-// 发送消息时立即滚到底部
+// 发送消息时立即滚到底部，完成后渲染 mermaid
 watch(
   () => chatStore.activeMessages.length,
-  () => {
-    if (!userScrolledUp.value) {
+  (newLen, oldLen) => {
+    const isNewMessage = oldLen !== undefined && newLen > oldLen
+    if (isNewMessage && chatStore.isStreaming) {
+      // 用户发送新消息时强制滚到底部（忽略 userScrolledUp）
       nextTick(() => scrollToBottom(false))
+    } else if (!userScrolledUp.value) {
+      nextTick(() => scrollToBottom(false))
+    }
+    // 加载已有对话（非流式）时渲染 mermaid
+    if (!chatStore.isStreaming) {
+      nextTick(() => onMessageRendered())
     }
   },
 )
 
-// 组件挂载时如有消息则滚到底部
+// 流式结束时强制渲染 mermaid（解决最后一个 token 为空时内容 watcher 不触发的问题）
+watch(
+  () => chatStore.isStreaming,
+  (streaming) => {
+    if (!streaming) {
+      nextTick(() => onMessageRendered())
+    }
+  },
+)
+
+// 组件挂载时如有消息则滚到底部并渲染 mermaid
 onMounted(() => {
   if (chatStore.activeMessages.length > 0) {
-    nextTick(() => scrollToBottom(false))
+    nextTick(() => {
+      scrollToBottom(false)
+      onMessageRendered()
+    })
   }
 })
 
-// markdown-it 实例
+let mermaidIdCounter = 0
+// Mermaid 渲染队列（避免并发问题）
+let mermaidRenderQueue = Promise.resolve()
+
+// markdown-it 实例：拦截 mermaid 代码块，不经过 highlight.js
 const md = new MarkdownIt({
   html: false,
   linkify: true,
   breaks: true,
   highlight(str: string, lang: string): string {
+    if (lang === 'mermaid') {
+      // mermaid 代码块原样输出，由 post-render 阶段处理
+      return `<div class="mermaid-container" data-mermaid-code="${encodeURIComponent(str)}"></div>`
+    }
     if (lang && hljs.getLanguage(lang)) {
       try {
         return '<pre class="hljs"><code>' +
@@ -82,6 +122,136 @@ const md = new MarkdownIt({
 function renderMarkdown(text: string): string {
   return md.render(text)
 }
+
+// 渲染所有 mermaid 图表
+async function renderMermaidDiagrams(container: HTMLElement): Promise<void> {
+  // 流式生成中跳过 mermaid 渲染（避免不完整代码块导致报错）
+  if (chatStore.isStreaming) return
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+
+  // 重新初始化 mermaid theme（确保跟随 theme 切换）
+  // 注意：sequence 和 flowchart 不设 useMaxWidth 以避免中文内容导致 viewBox NaN
+  await mermaid.initialize({
+    theme: isDark ? 'dark' : 'default',
+    flowchart: { useMaxWidth: true },
+    sequence: { useMaxWidth: false },
+    themeVariables: isDark ? {
+      primaryColor: '#2a2a2a',
+      primaryTextColor: '#f0f0f0',
+      primaryBorderColor: '#4a4a4a',
+      lineColor: '#666',
+      secondaryColor: '#333',
+      tertiaryColor: '#252525',
+    } : {
+      primaryColor: '#f9f9f9',
+      primaryTextColor: '#1a1a1a',
+      primaryBorderColor: '#ddd',
+      lineColor: '#aaa',
+      secondaryColor: '#f0f0f0',
+      tertiaryColor: '#fff',
+    },
+  })
+
+  const wrappers = container.querySelectorAll<HTMLDivElement>('.mermaid-container[data-mermaid-code]')
+  if (!wrappers.length) return
+
+  for (const wrapper of wrappers) {
+    const code = decodeURIComponent(wrapper.dataset.mermaidCode || '')
+    if (!code) continue
+
+    // 清空占位，显示加载状态
+    wrapper.innerHTML = '<div class="mermaid-loading">渲染图表中...</div>'
+
+    const id = `mermaid-${++mermaidIdCounter}`
+
+    // 串行化渲染，避免 mermaid 并发问题
+    mermaidRenderQueue = mermaidRenderQueue.then(async () => {
+      try {
+        const { svg } = await mermaid.render(id, code)
+        // 修复可能的 viewBox NaN 问题
+        const fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
+        wrapper.innerHTML = fixedSvg
+        // 添加复制按钮
+        addCopyButtonForMermaid(wrapper)
+      } catch (err) {
+        console.warn('Mermaid render failed:', err)
+        wrapper.innerHTML = `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`
+        // 失败时退化为代码块，也加复制按钮
+        addCopyButtonsForCodeBlocks(wrapper)
+      }
+    })
+    await mermaidRenderQueue
+  }
+}
+
+// 消息渲染后的回调：渲染 mermaid + 注入复制按钮
+function onMessageRendered(): void {
+  if (!messagesContainer.value) return
+  renderMermaidDiagrams(messagesContainer.value)
+  // 为代码块注入复制按钮（mermaid 的复制按钮在渲染完成后由 renderMermaidDiagrams 添加）
+  nextTick(() => addCopyButtonsForCodeBlocks(messagesContainer.value!))
+}
+
+// 为代码块添加复制按钮
+function addCopyButtonsForCodeBlocks(container: HTMLElement): void {
+  const preBlocks = container.querySelectorAll<HTMLPreElement>('pre.hljs')
+  for (const pre of preBlocks) {
+    if (pre.querySelector('.copy-btn')) continue
+
+    const code = pre.querySelector('code')
+    if (!code) continue
+
+    const btn = document.createElement('button')
+    btn.className = 'copy-btn'
+    btn.dataset.state = 'copy'
+    btn.innerHTML = COPY_ICON
+
+    btn.addEventListener('click', async () => {
+      const text = code.textContent || ''
+      try {
+        await navigator.clipboard.writeText(text)
+        btn.dataset.state = 'copied'
+        setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+      } catch {
+        btn.dataset.state = 'failed'
+        setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+      }
+    })
+
+    pre.style.position = 'relative'
+    pre.appendChild(btn)
+  }
+}
+
+// 为 mermaid 容器添加复制按钮
+function addCopyButtonForMermaid(container: HTMLDivElement): void {
+  if (container.querySelector('.copy-btn')) return
+
+  const btn = document.createElement('button')
+  btn.className = 'copy-btn'
+  btn.dataset.state = 'copy'
+  btn.innerHTML = COPY_ICON
+
+  btn.addEventListener('click', async () => {
+    const raw = decodeURIComponent(container.dataset.mermaidCode || '')
+    if (!raw) return
+    try {
+      await navigator.clipboard.writeText(raw)
+      btn.dataset.state = 'copied'
+      setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+    } catch {
+      btn.dataset.state = 'failed'
+      setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+    }
+  })
+
+  container.style.position = 'relative'
+  container.appendChild(btn)
+}
+
+// 复制按钮 SVG 图标（剪贴板）
+const COPY_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>`
 
 function formatTime(timestamp?: string): string {
   if (!timestamp) return ''
@@ -307,7 +477,7 @@ const showKbStatus = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 20%;
+  padding: 12px 40px;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-color);
   flex-wrap: wrap;
@@ -346,17 +516,16 @@ const showKbStatus = computed(() => {
 
 /* ===== 气泡对话布局 ===== */
 
-/* 消息行：左对齐（助手）/ 右对齐（用户） */
+/* 消息行 */
 .message-row {
-  padding: 6px 20%;
+  padding: 6px 40px;
 }
 
 .message-content-wrapper {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  max-width: 800px;
-  margin: 0 auto;
+  max-width: 100%;
 }
 
 /* 用户消息 -> 右对齐 */
@@ -398,7 +567,7 @@ const showKbStatus = computed(() => {
 .message-body {
   display: flex;
   flex-direction: column;
-  max-width: 75%;
+  max-width: 70%;
   min-width: 0;
 }
 
@@ -540,6 +709,108 @@ const showKbStatus = computed(() => {
   font-weight: 600;
 }
 
+/* Markdown 表格 */
+.assistant-bubble .markdown-body :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 8px 0;
+  font-size: 14px;
+  overflow-x: auto;
+  display: block;
+}
+
+.assistant-bubble .markdown-body :deep(th),
+.assistant-bubble .markdown-body :deep(td) {
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  text-align: left;
+  line-height: 1.5;
+}
+
+.assistant-bubble .markdown-body :deep(th) {
+  background: var(--bg-hover);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.assistant-bubble .markdown-body :deep(td) {
+  color: var(--text-secondary);
+}
+
+.assistant-bubble .markdown-body :deep(tr:nth-child(even) td) {
+  background: var(--bg-hover);
+}
+
+/* Mermaid 图表 */
+.assistant-bubble .markdown-body :deep(.mermaid-container) {
+  margin: 12px 0;
+  overflow-x: auto;
+  text-align: center;
+  background: var(--bg-primary);
+  border-radius: var(--radius-sm);
+  padding: 16px;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-container svg) {
+  max-width: 100%;
+  height: auto;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-loading) {
+  padding: 20px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 13px;
+}
+
+/* 暗色主题下 mermaid 由 reinitialize 的 dark theme 处理 */
+
+/* 复制按钮 */
+.assistant-bubble .markdown-body :deep(.copy-btn) {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  color: var(--text-tertiary);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s, background 0.2s, color 0.2s;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.assistant-bubble .markdown-body :deep(.copy-btn svg) {
+  width: 16px;
+  height: 16px;
+}
+
+.assistant-bubble .markdown-body :deep(pre:hover .copy-btn),
+.assistant-bubble .markdown-body :deep(.mermaid-container:hover .copy-btn) {
+  opacity: 1;
+}
+
+.assistant-bubble .markdown-body :deep(.copy-btn:hover) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.assistant-bubble .markdown-body :deep(.copy-btn[data-state="copied"]) {
+  color: #10b981;
+  border-color: #10b981;
+}
+
+.assistant-bubble .markdown-body :deep(.copy-btn[data-state="failed"]) {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
 /* 引用文件 */
 .message-files {
   display: flex;
@@ -584,10 +855,10 @@ const showKbStatus = computed(() => {
 /* 响应式 */
 @media (max-width: 1200px) {
   .message-row {
-    padding: 6px 10%;
+    padding: 6px 32px;
   }
   .kb-match-status {
-    padding: 12px 10%;
+    padding: 12px 32px;
   }
 }
 
