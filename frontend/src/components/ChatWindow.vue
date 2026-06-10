@@ -394,7 +394,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 
               <!-- 深度思考面板 -->
               <div
-                v-if="chatStore.thinkingSteps.length > 0 && index === chatStore.activeMessages.length - 1"
+                v-if="(chatStore.thinkingSteps.length > 0 && index === chatStore.activeMessages.length - 1) || (msg.thinking_steps && msg.thinking_steps.length > 0)"
                 class="thinking-panel"
               >
                 <div class="thinking-header" @click="toggleThinking">
@@ -406,16 +406,16 @@ function formatThinkingStep(step: ThinkingStep): string {
                     <polyline points="9 18 15 12 9 6"/>
                   </svg>
                   <span class="thinking-title">
-                    🤔 深度思考中...
+                    🤔 深度思考
                     <span class="thinking-step-count">
-                      ({{ chatStore.thinkingSteps.filter(s => s.type === 'action').length }} 步推理)
+                      ({{ (index === chatStore.activeMessages.length - 1 && chatStore.thinkingSteps.length > 0 ? chatStore.thinkingSteps : msg.thinking_steps || []).filter((s: ThinkingStep) => s.type === 'action').length }} 步推理)
                     </span>
                   </span>
-                  <span v-if="chatStore.isStreaming" class="thinking-spinner"></span>
+                  <span v-if="chatStore.isStreaming && index === chatStore.activeMessages.length - 1" class="thinking-spinner"></span>
                 </div>
                 <div v-show="thinkingExpanded" class="thinking-body">
                   <div
-                    v-for="(step, si) in chatStore.thinkingSteps"
+                    v-for="(step, si) in (index === chatStore.activeMessages.length - 1 && chatStore.thinkingSteps.length > 0 ? chatStore.thinkingSteps : msg.thinking_steps || [])"
                     :key="si"
                     class="thinking-step"
                     :class="step.type"

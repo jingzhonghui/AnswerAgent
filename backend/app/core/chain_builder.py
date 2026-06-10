@@ -18,7 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, Prom
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
 from langchain_core.tools import tool
-from langchain_classic.agents import create_react_agent, AgentExecutor
+from langchain_classic.agents import create_react_agent, create_tool_calling_agent, AgentExecutor
 
 from core.llm_factory import create_chat_llm
 
@@ -167,13 +167,7 @@ DEEP_SYSTEM_PROMPT = """\
 | 分步骤说明 | 有序列表或 Mermaid 流程图 |
 | 术语强调 | **加粗** 或 `行内代码` |
 
-可用 Mermaid 类型：graph、flowchart、sequenceDiagram、classDiagram、pie、mindmap
-
-## 可用工具
-{tools}
-
-## 工具名称
-{tool_names}"""
+可用 Mermaid 类型：graph、flowchart、sequenceDiagram、classDiagram、pie、mindmap"""
 
 
 def _build_knowledge_search_tool(kb_context: str):
@@ -214,9 +208,11 @@ def _build_knowledge_search_tool(kb_context: str):
 
 
 def build_deep_chain(context: str, callbacks: list = None):
-    """构建深度思考 ReAct Agent 链
+    """构建深度思考 Tool-Calling Agent 链
 
-    使用推理模型 + ReAct Agent 模式，支持多步推理-观察-行动循环。
+    使用推理模型 + Tool-Calling Agent 模式，支持多步推理-观察-行动循环。
+    与 ReAct 不同，Tool-Calling Agent 使用模型原生的 function calling 能力，
+    避免推理模型输出格式不兼容 ReAct 解析器的问题。
 
     Args:
         context: 合并后的知识库上下文（若为空则 Agent 只依赖通用知识）
@@ -229,31 +225,21 @@ def build_deep_chain(context: str, callbacks: list = None):
     kb_tool = _build_knowledge_search_tool(context)
     tools = [kb_tool]
 
-    # create_react_agent 需要 PromptTemplate（非 ChatPromptTemplate）
-    # 且必须包含 {tools}, {tool_names}, {agent_scratchpad} 三个变量
-    template = DEEP_SYSTEM_PROMPT + """
+    # Tool-Calling Agent 使用 ChatPromptTemplate
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DEEP_SYSTEM_PROMPT),
+        ("placeholder", "{chat_history}"),
+        ("human", "{input}"),
+        ("placeholder", "{agent_scratchpad}"),
+    ])
 
-## 对话历史
-{chat_history}
-
-## 用户问题
-{input}
-
-## 之前的尝试
-{agent_scratchpad}"""
-
-    prompt = PromptTemplate(
-        template=template,
-        input_variables=["tools", "tool_names", "input", "chat_history", "agent_scratchpad"],
-    )
-
-    agent = create_react_agent(llm, tools, prompt)
+    agent = create_tool_calling_agent(llm, tools, prompt)
     return AgentExecutor(
         agent=agent,
         tools=tools,
         verbose=False,
         handle_parsing_errors=True,
-        max_iterations=8,
-        early_stopping_method="generate",
+        max_iterations=10,
+        early_stopping_method="force",
         callbacks=callbacks or None,
     )

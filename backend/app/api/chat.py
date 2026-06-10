@@ -115,13 +115,26 @@ async def _stream_default(
 # 深度思考回调处理器 — 桥接同步 Agent 回调与异步 SSE 流
 # ============================================================
 
+SENTINEL = object()
+
 class _DeepThinkingCallback(BaseCallbackHandler):
-    """捕获 Agent 每一步 Thought/Action/Observation 并推入 asyncio.Queue。"""
+    """捕获 Agent 每一步 Thought/Action/Observation 并推入 asyncio.Queue。
+
+    Agent 完成或异常时会推入 sentinel 标记，通知主循环可以结束。
+    """
 
     def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
         super().__init__()
         self._queue = queue
         self._loop = loop
+
+    def _push(self, item: dict) -> None:
+        """线程安全地将事件推入队列"""
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
+
+    def _push_sentinel(self) -> None:
+        """通知主循环 Agent 已完成（正常或异常）"""
+        self._loop.call_soon_threadsafe(self._queue.put_nowait, SENTINEL)
 
     def on_agent_action(
         self,
@@ -129,21 +142,18 @@ class _DeepThinkingCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """Agent 决定执行某个工具时触发"""
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait,
-            {
-                "event": "agent_think",
-                "data": json.dumps(
-                    {
-                        "step": "action",
-                        "thought": getattr(action, "log", "") or "",
-                        "tool": action.tool,
-                        "tool_input": str(action.tool_input),
-                    },
-                    ensure_ascii=False,
-                ),
-            },
-        )
+        self._push({
+            "event": "agent_think",
+            "data": json.dumps(
+                {
+                    "step": "action",
+                    "thought": getattr(action, "log", "") or "",
+                    "tool": action.tool,
+                    "tool_input": str(action.tool_input),
+                },
+                ensure_ascii=False,
+            ),
+        })
 
     def on_tool_end(
         self,
@@ -151,34 +161,30 @@ class _DeepThinkingCallback(BaseCallbackHandler):
         **kwargs: Any,
     ) -> None:
         """工具执行完毕时触发（Observation）"""
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait,
-            {
-                "event": "agent_observe",
-                "data": json.dumps(
-                    {"step": "observation", "result": output},
-                    ensure_ascii=False,
-                ),
-            },
-        )
+        self._push({
+            "event": "agent_observe",
+            "data": json.dumps(
+                {"step": "observation", "result": output},
+                ensure_ascii=False,
+            ),
+        })
 
     def on_agent_finish(
         self,
         finish: AgentFinish,
         **kwargs: Any,
     ) -> None:
-        """Agent 完成时触发 — 推送最终回答"""
+        """Agent 完成时触发 — 先推送最终回答，再推送 sentinel"""
         output = finish.return_values.get("output", "")
-        self._loop.call_soon_threadsafe(
-            self._queue.put_nowait,
-            {
-                "event": "agent_finish",
-                "data": json.dumps(
-                    {"output": output},
-                    ensure_ascii=False,
-                ),
-            },
-        )
+        self._push({
+            "event": "agent_finish",
+            "data": json.dumps(
+                {"output": output},
+                ensure_ascii=False,
+            ),
+        })
+        # sentinel 必须在 agent_finish 之后推送，确保主循环先消费完 finish 事件
+        self._push_sentinel()
 
 
 def _clean_thought(log_text: str) -> str:
@@ -199,69 +205,90 @@ async def _stream_deep(
     kb_names: List[str],
     all_files: List[str],
 ) -> AsyncGenerator[Dict[str, str], None]:
-    """深度思考模式：使用 ReAct Agent 流式输出
+    """深度思考模式：使用 Tool-Calling Agent 流式输出
 
     通过回调 + asyncio.Queue 实时推送 Agent 的思考过程：
     - agent_think: Agent 的推理/行动决策
     - agent_observe: 工具执行结果
-    - agent_finish: 最终回答（作为 token 发出）
+    - agent_finish: 最终回答（转为 token 发出）
     - error: 异常
+
+    Agent 正常或异常结束时回调会推送 sentinel 到队列，
+    主循环收到 sentinel 后退出，不再依赖超时轮询。
     """
-    # 将格式化后的对话历史转为字符串
-    chat_history_str = ""
-    for msg in formatted_history:
-        if isinstance(msg, HumanMessage):
-            chat_history_str += f"Human: {msg.content}\n"
-        elif isinstance(msg, AIMessage):
-            chat_history_str += f"AI: {msg.content}\n"
+    # Tool-Calling Agent 使用 MessagesPlaceholder，直接传 LangChain 消息列表
+    chat_history = formatted_history
 
     queue: asyncio.Queue = asyncio.Queue()
     callback = _DeepThinkingCallback(queue, asyncio.get_event_loop())
     chain = build_deep_chain(context, callbacks=[callback])
 
+    loop = asyncio.get_event_loop()
+
     def _run_agent():
-        """在 executor 线程中同步执行 Agent"""
+        """在 executor 线程中同步执行 Agent。正常完成时回调已发送 sentinel；
+        异常由 finally 兜底发送 sentinel。
+        """
         try:
             chain.invoke({
                 "input": message,
-                "chat_history": chat_history_str,
+                "chat_history": chat_history,
             })
-        except Exception:
-            # 异常通过 sentinel 传回主循环
-            raise
+        finally:
+            # 无论正常还是异常，确保 sentinel 一定被推送
+            # 使用外层保存的 loop，避免 executor 线程中 get_event_loop() 抛 RuntimeError
+            loop.call_soon_threadsafe(
+                queue.put_nowait, SENTINEL,
+            )
 
     # 在 executor 中启动 Agent（不 await，让它后台跑）
     task = asyncio.get_event_loop().run_in_executor(None, _run_agent)
 
     try:
         while True:
-            # 非阻塞等待队列事件，同时检查 executor 是否已完成
+            # 带超时等待队列事件 — sentinel 机制保证正常结束不依赖超时；
+            # 超时仅用于定期检查客户端断开
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=0.2)
+                event = await asyncio.wait_for(queue.get(), timeout=1)
             except asyncio.TimeoutError:
-                # 超时：检查 executor 是否已完成
-                if task.done():
-                    # executor 已完成但可能有残留事件
-                    while not queue.empty():
-                        event = queue.get_nowait()
-                        yield event
-                    # 检查 executor 是否抛了异常
-                    exc = task.exception()
-                    if exc:
-                        logger.exception("Deep chain invoke failed")
-                        yield {
-                            "event": "error",
-                            "data": json.dumps(
-                                {"message": f"深度思考执行失败: {exc}"},
-                                ensure_ascii=False,
-                            ),
-                        }
-                    return
-                # 还在运行，继续等待
+                # 超时不是错误：检查客户端是否断开了
                 if await request.is_disconnected():
                     task.cancel()
                     return
                 continue
+
+            # sentinel 到达 → 退出主循环
+            if event is SENTINEL:
+                # 在退出前排空队列中可能遗留的事件（例如 agent_finish 在 sentinel 之前）
+                while not queue.empty():
+                    late_event: dict = queue.get_nowait()
+                    if late_event is SENTINEL:
+                        continue
+                    if late_event["event"] == "agent_finish":
+                        data = json.loads(late_event["data"])
+                        output_text = data.get("output", "")
+                        if output_text:
+                            yield {
+                                "event": "token",
+                                "data": json.dumps({"content": output_text}, ensure_ascii=False),
+                            }
+                    else:
+                        yield late_event
+                # 检查 executor 是否抛了异常（正常完成时 exception() 会抛 InvalidStateError）
+                try:
+                    exc = task.exception()
+                except asyncio.InvalidStateError:
+                    exc = None
+                if exc:
+                    logger.exception("Deep chain invoke failed")
+                    yield {
+                        "event": "error",
+                        "data": json.dumps(
+                            {"message": f"深度思考执行失败: {exc}"},
+                            ensure_ascii=False,
+                        ),
+                    }
+                return
 
             # 收到 agent_finish 事件 → 转为 token 发出
             if event["event"] == "agent_finish":
@@ -381,6 +408,7 @@ async def _stream_events(
         # --- 4. 流式输出（按 mode 分发） ---
         full_response = ""
         _collector = [""]  # 闭包收集 full_response
+        _thinking_steps: List[dict] = []  # 闭包收集深度思考步骤
 
         if mode == "deep":
             gen = _stream_deep(
@@ -396,6 +424,20 @@ async def _stream_events(
         async for event in gen:
             if event["event"] == "token":
                 _collector[0] += json.loads(event["data"]).get("content", "")
+            elif event["event"] == "agent_think":
+                data = json.loads(event["data"])
+                _thinking_steps.append({
+                    "type": "action",
+                    "thought": data.get("thought", ""),
+                    "tool": data.get("tool", ""),
+                    "toolInput": data.get("tool_input", ""),
+                })
+            elif event["event"] == "agent_observe":
+                data = json.loads(event["data"])
+                _thinking_steps.append({
+                    "type": "observation",
+                    "result": data.get("result", ""),
+                })
             # agent_think / agent_observe 事件直接透传给前端
             yield event
 
@@ -407,6 +449,7 @@ async def _stream_events(
             full_response,
             kb_names=kb_names if kb_names else None,
             files_used=all_files if all_files else None,
+            thinking_steps=_thinking_steps if _thinking_steps else None,
         )
 
         assistant_messages = [

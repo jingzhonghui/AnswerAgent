@@ -472,6 +472,7 @@ class ChatManager:
         content: str,
         kb_names: Optional[List[str]] = None,
         files_used: Optional[List[str]] = None,
+        thinking_steps: Optional[List[dict]] = None,
     ) -> None:
         """追加助手消息
 
@@ -482,6 +483,7 @@ class ChatManager:
             content: 消息内容
             kb_names: 关联的知识库列表
             files_used: 引用的文件列表
+            thinking_steps: 深度思考步骤列表（仅 deep 模式）
 
         Raises:
             ConversationNotFoundError: 对话不存在
@@ -509,6 +511,14 @@ class ChatManager:
                     file_name=Path(rel_path).name,
                 ))
 
+        # 构建 thinking_steps 对象列表
+        thinking_steps_objects = None
+        if thinking_steps:
+            from models.schemas import ThinkingStep
+            thinking_steps_objects = [
+                ThinkingStep(**step) for step in thinking_steps
+            ]
+
         message = Message(
             id=str(uuid.uuid4()),
             role="assistant",
@@ -516,6 +526,7 @@ class ChatManager:
             created_at=datetime.now(),
             kb_names=kb_names,
             files_used=files_used_objects,
+            thinking_steps=thinking_steps_objects,
         )
 
         conversation.messages.append(message)

@@ -20,6 +20,7 @@ export interface Message {
   content: string
   kb_names?: string[]
   files_used?: FileRef[]
+  thinking_steps?: ThinkingStep[]
   timestamp?: string
   created_at?: string
 }

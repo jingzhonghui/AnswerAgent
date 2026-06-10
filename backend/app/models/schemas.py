@@ -13,6 +13,15 @@ class FileSelection(BaseModel):
     file_name: str = Field(..., description="File name only")
 
 
+class ThinkingStep(BaseModel):
+    """深度思考步骤"""
+    type: str = Field(..., description="Step type: 'action' or 'observation'")
+    thought: Optional[str] = Field(None, description="Agent reasoning text")
+    tool: Optional[str] = Field(None, description="Tool name")
+    toolInput: Optional[str] = Field(None, description="Tool input arguments")
+    result: Optional[str] = Field(None, description="Tool execution result")
+
+
 class Message(BaseModel):
     """Single message in a conversation."""
     id: Optional[str] = Field(None, description="Message UUID")
@@ -20,6 +29,7 @@ class Message(BaseModel):
     content: str = Field(..., description="Message content")
     kb_names: Optional[List[str]] = Field(None, description="Knowledge bases used for this message")
     files_used: Optional[List[FileSelection]] = Field(None, description="Files referenced in this message")
+    thinking_steps: Optional[List[ThinkingStep]] = Field(None, description="Deep thinking steps (only for assistant messages in deep mode)")
     timestamp: Optional[datetime] = Field(None, description="Message timestamp")
     created_at: Optional[datetime] = Field(None, description="Message creation timestamp (alias)")
 

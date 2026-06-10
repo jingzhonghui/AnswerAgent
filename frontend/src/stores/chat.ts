@@ -73,6 +73,11 @@ export const useChatStore = defineStore('chat', () => {
       const conversation = await getConversation(id)
       activeConversationId.value = id
       activeMessages.value = conversation.messages
+      // 恢复最后一条 assistant 消息的深度思考步骤
+      const lastAssistant = [...activeMessages.value].reverse().find(m => m.role === 'assistant')
+      if (lastAssistant?.thinking_steps && lastAssistant.thinking_steps.length > 0) {
+        thinkingSteps.value = lastAssistant.thinking_steps
+      }
     } catch (error) {
       console.error('Failed to load conversation:', error)
       activeMessages.value = []
@@ -230,7 +235,11 @@ export const useChatStore = defineStore('chat', () => {
     } finally {
       isStreaming.value = false
       abortController = null
-      // 思考步骤保留不立即清空（流式结束后用户仍可查看折叠面板）
+      // 流式结束后，把思考步骤保存到助手消息中（用于刷新后恢复）
+      const lastIdx = activeMessages.value.length - 1
+      if (thinkingSteps.value.length > 0 && activeMessages.value[lastIdx]) {
+        activeMessages.value[lastIdx].thinking_steps = [...thinkingSteps.value]
+      }
       // 刷新对话列表以更新标题和时间
       await loadConversations()
     }
