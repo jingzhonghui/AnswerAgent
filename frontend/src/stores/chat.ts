@@ -44,6 +44,34 @@ export const useChatStore = defineStore('chat', () => {
     }
   }
 
+  // 从 sessionStorage 恢复上次打开的对话（页面刷新后调用）
+  async function restoreSession(): Promise<void> {
+    const savedId = sessionStorage.getItem('activeConversationId')
+    if (!savedId) return
+
+    // 确认该对话仍存在（在已加载的列表中）
+    const exists = conversations.value.some(c => c.id === savedId)
+    if (!exists) {
+      sessionStorage.removeItem('activeConversationId')
+      return
+    }
+
+    // 避免重复加载
+    if (activeConversationId.value === savedId) return
+
+    try {
+      const conversation = await getConversation(savedId)
+      activeConversationId.value = savedId
+      activeMessages.value = conversation.messages
+      const lastAssistant = [...activeMessages.value].reverse().find(m => m.role === 'assistant')
+      if (lastAssistant?.thinking_steps && lastAssistant.thinking_steps.length > 0) {
+        thinkingSteps.value = lastAssistant.thinking_steps
+      }
+    } catch {
+      sessionStorage.removeItem('activeConversationId')
+    }
+  }
+
   // 新建对话
   async function createConversation(): Promise<string | null> {
     try {
@@ -54,6 +82,7 @@ export const useChatStore = defineStore('chat', () => {
       matchedKbs.value = []
       selectedFiles.value = []
       thinkingSteps.value = []
+      sessionStorage.setItem('activeConversationId', newConv.id)
       return newConv.id
     } catch (error) {
       console.error('Failed to create conversation:', error)
@@ -73,6 +102,8 @@ export const useChatStore = defineStore('chat', () => {
       const conversation = await getConversation(id)
       activeConversationId.value = id
       activeMessages.value = conversation.messages
+      // 持久化当前活跃对话 ID，刷新页面后恢复
+      sessionStorage.setItem('activeConversationId', id)
       // 恢复最后一条 assistant 消息的深度思考步骤
       const lastAssistant = [...activeMessages.value].reverse().find(m => m.role === 'assistant')
       if (lastAssistant?.thinking_steps && lastAssistant.thinking_steps.length > 0) {
@@ -97,6 +128,7 @@ export const useChatStore = defineStore('chat', () => {
         matchedKbs.value = []
         selectedFiles.value = []
         thinkingSteps.value = []
+        sessionStorage.removeItem('activeConversationId')
       }
       return true
     } catch (error) {
@@ -128,6 +160,7 @@ export const useChatStore = defineStore('chat', () => {
       matchedKbs.value = []
       selectedFiles.value = []
       thinkingSteps.value = []
+      sessionStorage.removeItem('activeConversationId')
     }
   }
 
@@ -291,6 +324,7 @@ export const useChatStore = defineStore('chat', () => {
     // 方法
     loadConversations,
     createConversation,
+    restoreSession,
     selectConversation,
     deleteConversation,
     renameConversation,

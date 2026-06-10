@@ -69,6 +69,22 @@ export async function renameConversation(id: string, title: string): Promise<voi
   await api.patch(`/conversations/${id}/title`, data)
 }
 
+// 导出对话为 Markdown -> GET /api/conversations/{id}/export
+export async function exportConversation(id: string, filename: string): Promise<void> {
+  const response = await api.get(`/conversations/${id}/export`, {
+    responseType: 'blob',
+  })
+  // 触发浏览器下载
+  const url = URL.createObjectURL(new Blob([response.data], { type: 'text/markdown; charset=utf-8' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // SSE 流式问答 -> POST /api/chat/stream
 export interface StreamChatHandlers {
   onKbMatched: (kbNames: string[]) => void

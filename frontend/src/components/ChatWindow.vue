@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, nextTick, onMounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import MarkdownIt from 'markdown-it'
 import hljs from 'highlight.js'
 import mermaid from 'mermaid'
@@ -21,6 +21,103 @@ mermaid.initialize({
 const messagesContainer = ref<HTMLElement | null>(null)
 const userScrolledUp = ref(false)
 const SCROLL_THRESHOLD = 60 // 距底部多少像素以内视为"在底部"
+
+// ===== 目录导航：用户提问小圆点 =====
+interface UserQuestionDot {
+  index: number       // 消息在 activeMessages 中的索引
+  content: string     // 完整问题文本
+  shortContent: string // 截断后的问题文本（用于 tooltip 显示）
+}
+
+const userQuestions = computed<UserQuestionDot[]>(() => {
+  return chatStore.activeMessages
+    .map((msg, index) => ({ msg, index }))
+    .filter(({ msg }) => msg.role === 'user')
+    .map(({ msg, index }) => ({
+      index,
+      content: msg.content,
+      shortContent: msg.content.length > 30 ? msg.content.slice(0, 30) + '…' : msg.content,
+    }))
+})
+
+const activeDotIndex = ref(0)
+let dotObserver: IntersectionObserver | null = null
+
+function setupDotObserver(): void {
+  cleanupDotObserver()
+  const container = messagesContainer.value
+  if (!container) return
+
+  // 收集所有用户消息 DOM 元素
+  const userRows = container.querySelectorAll<HTMLElement>('.message-row.user')
+  if (!userRows.length) return
+
+  // 记录每个用户消息元素距离视口顶部的距离，找出最接近顶部（已滚过）的那个
+  const updateActiveDot = () => {
+    const containerRect = container.getBoundingClientRect()
+    let closestIdx = -1
+    let closestDist = Infinity
+
+    userRows.forEach((row) => {
+      const idx = Number(row.dataset.userMsgIndex)
+      if (isNaN(idx)) return
+      const rect = row.getBoundingClientRect()
+      // 元素顶部到容器顶部的距离（负值 = 已滚过视口上方）
+      const distFromTop = rect.top - containerRect.top
+      // 选择最接近容器顶部且在可见范围内的
+      if (distFromTop <= 80 && distFromTop > -rect.height && Math.abs(distFromTop) < closestDist) {
+        closestDist = Math.abs(distFromTop)
+        closestIdx = idx
+      }
+    })
+
+    if (closestIdx >= 0) {
+      // 找到这个 user row 在 userQuestions 中的序号
+      const dotIdx = userQuestions.value.findIndex(q => q.index === closestIdx)
+      if (dotIdx >= 0) {
+        activeDotIndex.value = dotIdx
+      }
+    }
+  }
+
+  // 使用 IntersectionObserver 作为主要跟踪 + scroll 事件更新
+  dotObserver = new IntersectionObserver(
+    () => updateActiveDot(),
+    { root: container, rootMargin: '-60px 0px 0px 0px', threshold: 0 },
+  )
+  userRows.forEach(row => dotObserver!.observe(row))
+
+  // 附加滚动监听用于精确定位
+  container.addEventListener('scroll', updateActiveDot, { passive: true })
+  // 保存清理函数引用
+  ;(container as any).__dotScrollHandler = updateActiveDot
+}
+
+function cleanupDotObserver(): void {
+  if (dotObserver) {
+    dotObserver.disconnect()
+    dotObserver = null
+  }
+  const container = messagesContainer.value
+  if (container && (container as any).__dotScrollHandler) {
+    container.removeEventListener('scroll', (container as any).__dotScrollHandler)
+    ;(container as any).__dotScrollHandler = null
+  }
+}
+
+function scrollToMessage(msgIndex: number): void {
+  const container = messagesContainer.value
+  if (!container) return
+
+  const row = container.querySelector<HTMLElement>(`.message-row.user[data-user-msg-index="${msgIndex}"]`)
+  if (!row) return
+
+  const containerRect = container.getBoundingClientRect()
+  const rowRect = row.getBoundingClientRect()
+  // 滚动使该消息对齐到容器顶部偏下一点
+  const offset = rowRect.top - containerRect.top + container.scrollTop - 80
+  container.scrollTo({ top: offset, behavior: 'smooth' })
+}
 
 function isNearBottom(): boolean {
   const el = messagesContainer.value
@@ -91,6 +188,10 @@ onMounted(() => {
       onMessageRendered()
     })
   }
+})
+
+onUnmounted(() => {
+  cleanupDotObserver()
 })
 
 let mermaidIdCounter = 0
@@ -186,12 +287,15 @@ async function renderMermaidDiagrams(container: HTMLElement): Promise<void> {
   }
 }
 
-// 消息渲染后的回调：渲染 mermaid + 注入复制按钮
+// 消息渲染后的回调：渲染 mermaid + 注入复制按钮 + 初始化目录导航
 function onMessageRendered(): void {
   if (!messagesContainer.value) return
   renderMermaidDiagrams(messagesContainer.value)
   // 为代码块注入复制按钮（mermaid 的复制按钮在渲染完成后由 renderMermaidDiagrams 添加）
-  nextTick(() => addCopyButtonsForCodeBlocks(messagesContainer.value!))
+  nextTick(() => {
+    addCopyButtonsForCodeBlocks(messagesContainer.value!)
+    setupDotObserver()
+  })
 }
 
 // 为代码块添加复制按钮
@@ -369,6 +473,7 @@ function formatThinkingStep(step: ThinkingStep): string {
           :key="index"
           class="message-row"
           :class="msg.role"
+          :data-user-msg-index="msg.role === 'user' ? index : undefined"
         >
           <!-- 日期分隔 -->
           <div
@@ -477,6 +582,23 @@ function formatThinkingStep(step: ThinkingStep): string {
           </div>
         </div>
       </template>
+    </div>
+
+    <!-- 目录导航：用户提问小圆点 -->
+    <div
+      v-if="userQuestions.length > 1"
+      class="dot-nav"
+    >
+      <div
+        v-for="(q, qi) in userQuestions"
+        :key="qi"
+        class="dot-nav-item"
+        :class="{ active: qi === activeDotIndex }"
+        @click="scrollToMessage(q.index)"
+      >
+        <div class="dot"></div>
+        <span class="dot-tooltip">{{ q.shortContent }}</span>
+      </div>
     </div>
   </main>
 </template>
@@ -1137,5 +1259,89 @@ function formatThinkingStep(step: ThinkingStep): string {
 
 [data-theme="dark"] .step-badge.observation {
   background: rgba(16, 185, 129, 0.18);
+}
+
+/* ===== 目录导航：用户提问小圆点 ===== */
+.dot-nav {
+  position: absolute;
+  right: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  z-index: 10;
+}
+
+.dot-nav-item {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  transition: all 0.2s ease;
+  opacity: 0.4;
+}
+
+.dot-nav-item:hover .dot {
+  width: 8px;
+  height: 8px;
+  background: var(--accent-color);
+  opacity: 0.8;
+}
+
+.dot-nav-item.active .dot {
+  width: 10px;
+  height: 10px;
+  background: var(--accent-color);
+  opacity: 1;
+  box-shadow: 0 0 6px rgba(78, 110, 242, 0.4);
+}
+
+/* tooltip：悬停显示问题文本 */
+.dot-tooltip {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 6px 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  box-shadow: var(--shadow-md);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+/* tooltip 小三角箭头 */
+.dot-tooltip::after {
+  content: '';
+  position: absolute;
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  border: 5px solid transparent;
+  border-left-color: var(--border-color);
+}
+
+.dot-nav-item:hover .dot-tooltip {
+  opacity: 1;
 }
 </style>

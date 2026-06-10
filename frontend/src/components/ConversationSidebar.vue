@@ -2,6 +2,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useAuthStore } from '@/stores/auth'
+import { exportConversation } from '@/api'
 
 const chatStore = useChatStore()
 const authStore = useAuthStore()
@@ -84,6 +85,8 @@ const groupedConversations = computed(() => {
 
 onMounted(async () => {
   await chatStore.loadConversations()
+  // 页面刷新后自动恢复上次打开的对话
+  await chatStore.restoreSession()
 })
 
 async function handleCreateConversation() {
@@ -131,6 +134,13 @@ async function handleDelete(event: Event, id: string) {
   if (confirm('确定要删除这个对话吗？')) {
     await chatStore.deleteConversation(id)
   }
+}
+
+async function handleExport(event: Event, id: string, title: string) {
+  event.stopPropagation()
+  // 生成安全的文件名
+  const safeTitle = title.replace(/[/\\:*?"<>|]/g, '_')
+  await exportConversation(id, `${safeTitle}.md`)
 }
 </script>
 
@@ -210,6 +220,17 @@ async function handleDelete(event: Event, id: string) {
                 class="conversation-actions"
                 @click.stop
               >
+                <button
+                  class="action-btn"
+                  @click="handleExport($event, conv.id, conv.title)"
+                  title="导出为 Markdown"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                    <polyline points="7 10 12 15 17 10"/>
+                    <line x1="12" y1="15" x2="12" y2="3"/>
+                  </svg>
+                </button>
                 <button
                   class="action-btn"
                   @click="startRename($event, conv.id, conv.title)"
