@@ -39,11 +39,22 @@ from core.chain_builder import (
     build_deep_chain,
     format_history,
 )
-from core.llm_factory import LLMConfigError
-from langchain_core.messages import AIMessage, HumanMessage
+from core.llm_factory import LLMConfigError, create_chat_llm
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.agents import AgentAction, AgentFinish
 from models.schemas import ChatStreamRequest
+
+# 标题生成 prompt
+TITLE_PROMPT = """你是一个对话标题生成助手。根据用户发送的第一条消息，生成一个简短的对话标题。
+
+要求：
+- 标题不超过15个字
+- 概括用户问题的核心意图
+- 直接返回标题文本，不要加引号、标点或任何解释
+
+用户消息：{message}
+标题："""
 
 logger = logging.getLogger("app.api.chat")
 
@@ -194,6 +205,32 @@ def _clean_thought(log_text: str) -> str:
     # 去掉 "Action: ..." 和 "Action Input: ..." 行，保留前面的 Thought 或纯文本
     cleaned = re.split(r'\n\s*(?:Action|Thought)\s*:', log_text, maxsplit=1)[0].strip()
     return cleaned
+
+
+def _generate_title(message: str) -> Optional[str]:
+    """根据用户消息生成简短对话标题
+
+    使用 LLM 概括用户问题的核心意图，生成不超过 15 字的标题。
+
+    Args:
+        message: 用户的第一条消息
+
+    Returns:
+        生成的标题字符串，失败时返回 None（调用方应使用原有标题兜底）
+    """
+    try:
+        llm = create_chat_llm(temperature=0.1)
+        prompt = TITLE_PROMPT.format(message=message)
+        title = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+        # 清理可能的多余字符
+        title = title.replace('"', '').replace('「', '').replace('」', '').replace('《', '').replace('》', '')
+        # 截断过长的标题
+        if len(title) > 20:
+            title = title[:18] + '…'
+        return title or None
+    except Exception:
+        logger.debug("Failed to generate title", exc_info=True)
+        return None
 
 
 async def _stream_deep(
@@ -452,6 +489,20 @@ async def _stream_events(
             thinking_steps=_thinking_steps if _thinking_steps else None,
         )
 
+        # --- 6. 自动生成标题 ---
+        new_title = None
+        conv = chat_manager.get_conversation(conversation_id)
+        if conv.title == "新对话":
+            # 检查这是否是对话中的第一条助手回复
+            assistant_count = sum(1 for m in conv.messages if m.role == "assistant")
+            if assistant_count <= 1:
+                new_title = _generate_title(message)
+                if new_title:
+                    try:
+                        chat_manager.rename_conversation(conversation_id, new_title)
+                    except Exception:
+                        logger.debug("Failed to rename conversation", exc_info=True)
+
         assistant_messages = [
             m for m in chat_manager.get_conversation(conversation_id).messages
             if m.role == "assistant"
@@ -460,7 +511,13 @@ async def _stream_events(
 
         yield {
             "event": "done",
-            "data": json.dumps({"message_id": message_id}, ensure_ascii=False),
+            "data": json.dumps(
+                {
+                    "message_id": message_id,
+                    "title": new_title,
+                },
+                ensure_ascii=False,
+            ),
         }
 
     except asyncio.CancelledError:

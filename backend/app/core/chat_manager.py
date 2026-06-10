@@ -443,6 +443,9 @@ class ChatManager:
     def append_user_message(self, conversation_id: str, content: str) -> None:
         """追加用户消息（仅操作 JSON 文件）
 
+        自动去重：如果最后一条消息也是相同内容的用户消息，且时间差 < 10 秒，
+        跳过保存（防止前端重复发送）。
+
         Args:
             conversation_id: 对话 ID
             content: 消息内容
@@ -451,6 +454,15 @@ class ChatManager:
             ConversationNotFoundError: 对话不存在
         """
         conversation = self._load_conversation(conversation_id)
+
+        # 去重检查：防止短时间内重复写入相同用户消息
+        if conversation.messages:
+            last_msg = conversation.messages[-1]
+            if last_msg.role == "user" and last_msg.content == content:
+                if last_msg.created_at:
+                    delta = (datetime.now() - last_msg.created_at).total_seconds()
+                    if delta < 10:
+                        return  # 重复消息，跳过
 
         message = Message(
             id=str(uuid.uuid4()),

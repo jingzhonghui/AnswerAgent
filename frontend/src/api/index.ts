@@ -74,7 +74,7 @@ export interface StreamChatHandlers {
   onKbMatched: (kbNames: string[]) => void
   onFilesSelected: (kb: string, files: string[]) => void
   onToken: (content: string) => void
-  onDone: (messageId: string) => void
+  onDone: (messageId: string, title?: string) => void
   onError: (message: string) => void
   /** 深度思考：Agent 推理/行动决策 */
   onAgentThink?: (step: string, thought: string, tool: string, toolInput: string) => void
@@ -115,7 +115,7 @@ export async function streamChat(
             handlers.onToken(data.content || '')
             break
           case 'done':
-            handlers.onDone(data.message_id || '')
+            handlers.onDone(data.message_id || '', data.title ?? undefined)
             break
           case 'agent_think':
             handlers.onAgentThink?.(

@@ -731,12 +731,14 @@ function formatThinkingStep(step: ThinkingStep): string {
   margin-bottom: 0;
 }
 
+/* 内联代码 */
 .assistant-bubble .markdown-body :deep(code) {
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.08);
   border-radius: 4px;
   font-size: 13px;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+  color: inherit;
 }
 
 [data-theme="dark"] .assistant-bubble .markdown-body :deep(code) {
@@ -749,12 +751,21 @@ function formatThinkingStep(step: ThinkingStep): string {
   overflow-x: auto;
 }
 
+/* 代码块：浅色模式覆盖 github-dark.css */
+.assistant-bubble .markdown-body :deep(pre code.hljs),
 .assistant-bubble .markdown-body :deep(pre code) {
   display: block;
   padding: 12px 16px;
   font-size: 13px;
   line-height: 1.5;
-  background: var(--bg-primary) !important;
+  color: #24292f !important;
+  background: #f6f8fa !important;
+}
+
+[data-theme="dark"] .assistant-bubble .markdown-body :deep(pre code.hljs),
+[data-theme="dark"] .assistant-bubble .markdown-body :deep(pre code) {
+  color: #c9d1d9 !important;
+  background: #0d1117 !important;
 }
 
 .assistant-bubble .markdown-body :deep(ul),
@@ -1080,11 +1091,38 @@ function formatThinkingStep(step: ThinkingStep): string {
   margin-bottom: 0;
 }
 
+/* 思考面板内联代码 */
 .thinking-step-content :deep(code) {
   font-size: 12px;
   padding: 1px 4px;
-  background: var(--bg-hover);
+  background: rgba(0, 0, 0, 0.08);
   border-radius: 3px;
+  color: inherit;
+}
+
+[data-theme="dark"] .thinking-step-content :deep(code) {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+/* 思考面板代码块：与正式回复保持一致的浅/深色样式 */
+.thinking-step-content :deep(pre) {
+  margin: 4px 0;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+}
+
+.thinking-step-content :deep(pre code) {
+  display: block;
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #24292f !important;
+  background: #f6f8fa !important;
+}
+
+[data-theme="dark"] .thinking-step-content :deep(pre code) {
+  color: #c9d1d9 !important;
+  background: #0d1117 !important;
 }
 
 .thinking-step-content :deep(strong) {

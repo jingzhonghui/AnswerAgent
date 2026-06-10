@@ -133,6 +133,9 @@ export const useChatStore = defineStore('chat', () => {
 
   // 发送消息（SSE 流式）
   async function sendMessage(content: string, mode: string = 'default'): Promise<void> {
+    // 防止重复发送（流式进行中不允许再发送）
+    if (isStreaming.value) return
+
     if (!activeConversationId.value) {
       const newId = await createConversation()
       if (!newId) return
@@ -213,8 +216,15 @@ export const useChatStore = defineStore('chat', () => {
               result: result || '',
             })
           },
-          onDone(_messageId) {
+          onDone(_messageId, newTitle) {
             // 完成
+            // 如果后端生成了新标题，更新本地对话标题
+            if (newTitle && activeConversationId.value) {
+              const conv = conversations.value.find(c => c.id === activeConversationId.value)
+              if (conv) {
+                conv.title = newTitle
+              }
+            }
           },
           onError(message) {
             const idx = activeMessages.value.length - 1
