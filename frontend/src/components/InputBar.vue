@@ -122,7 +122,7 @@ function stopStreaming() {
   background: transparent;
   border: none;
   resize: none;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.5;
   color: var(--text-primary);
   font-family: inherit;
@@ -163,7 +163,7 @@ function stopStreaming() {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-full);
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.2s;
 }
@@ -229,7 +229,7 @@ function stopStreaming() {
 .input-hint {
   text-align: center;
   margin-top: 8px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 

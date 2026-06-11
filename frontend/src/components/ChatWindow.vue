@@ -188,15 +188,157 @@ onMounted(() => {
       onMessageRendered()
     })
   }
+  document.addEventListener('keydown', handleFullscreenKeydown)
 })
 
 onUnmounted(() => {
   cleanupDotObserver()
+  document.removeEventListener('keydown', handleFullscreenKeydown)
 })
 
 let mermaidIdCounter = 0
 // Mermaid 渲染队列（避免并发问题）
 let mermaidRenderQueue = Promise.resolve()
+
+// ===== Mermaid 全屏弹窗状态 =====
+const fullscreenMermaid = ref({ code: '', visible: false })
+const fullscreenMermaidRef = ref<HTMLElement | null>(null)
+let fullscreenMermaidRendered = false
+
+// 缩放与拖拽
+const fsScale = ref(1)
+const fsTranslateX = ref(0)
+const fsTranslateY = ref(0)
+let fsIsDragging = false
+let fsDragStartX = 0
+let fsDragStartY = 0
+let fsLastTranslateX = 0
+let fsLastTranslateY = 0
+
+const zoomTransformStyle = computed(() => ({
+  transform: `translate(${fsTranslateX.value}px, ${fsTranslateY.value}px) scale(${fsScale.value})`,
+  transformOrigin: 'center center',
+  cursor: fsIsDragging ? 'grabbing' : fsScale.value > 1 ? 'grab' : 'default',
+}))
+
+function fsZoomIn(): void {
+  fsScale.value = Math.min(fsScale.value + 0.25, 5)
+}
+
+function fsZoomOut(): void {
+  fsScale.value = Math.max(fsScale.value - 0.25, 0.25)
+}
+
+function fsResetZoom(): void {
+  fsScale.value = 1
+  fsTranslateX.value = 0
+  fsTranslateY.value = 0
+}
+
+function fsStartDrag(e: MouseEvent): void {
+  if (fsScale.value <= 1) return
+  fsIsDragging = true
+  fsDragStartX = e.clientX
+  fsDragStartY = e.clientY
+  fsLastTranslateX = fsTranslateX.value
+  fsLastTranslateY = fsTranslateY.value
+}
+
+function fsOnDrag(e: MouseEvent): void {
+  if (!fsIsDragging) return
+  fsTranslateX.value = fsLastTranslateX + (e.clientX - fsDragStartX)
+  fsTranslateY.value = fsLastTranslateY + (e.clientY - fsDragStartY)
+}
+
+function fsEndDrag(): void {
+  fsIsDragging = false
+}
+
+function fsOnWheel(e: WheelEvent): void {
+  e.preventDefault()
+  const delta = e.deltaY > 0 ? -0.15 : 0.15
+  const newScale = Math.max(0.25, Math.min(5, fsScale.value + delta))
+
+  // 以光标位置为中心缩放
+  const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+  const cx = e.clientX - rect.left
+  const cy = e.clientY - rect.top
+  const ratio = newScale / fsScale.value
+  fsTranslateX.value = cx - ratio * (cx - fsTranslateX.value)
+  fsTranslateY.value = cy - ratio * (cy - fsTranslateY.value)
+  fsScale.value = newScale
+}
+
+async function openMermaidFullscreen(code: string): Promise<void> {
+  fullscreenMermaid.value = { code, visible: true }
+  fullscreenMermaidRendered = false
+  await nextTick()
+  await renderFullscreenMermaid()
+}
+
+function closeMermaidFullscreen(): void {
+  fullscreenMermaid.value = { code: '', visible: false }
+  fullscreenMermaidRendered = false
+  fsResetZoom()
+}
+
+async function renderFullscreenMermaid(): Promise<void> {
+  if (!fullscreenMermaidRef.value || fullscreenMermaidRendered) return
+  const code = fullscreenMermaid.value.code
+  if (!code) return
+
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+  await mermaid.initialize({
+    theme: isDark ? 'dark' : 'default',
+    flowchart: { useMaxWidth: true },
+    sequence: { useMaxWidth: false },
+    themeVariables: isDark ? {
+      primaryColor: '#2a2a2a',
+      primaryTextColor: '#f0f0f0',
+      primaryBorderColor: '#4a4a4a',
+      lineColor: '#666',
+      secondaryColor: '#333',
+      tertiaryColor: '#252525',
+    } : {
+      primaryColor: '#f9f9f9',
+      primaryTextColor: '#1a1a1a',
+      primaryBorderColor: '#ddd',
+      lineColor: '#aaa',
+      secondaryColor: '#f0f0f0',
+      tertiaryColor: '#fff',
+    },
+  })
+
+  const id = `mermaid-fullscreen-${++mermaidIdCounter}`
+  try {
+    const { svg } = await mermaid.render(id, code)
+    const fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
+    // 渲染到 zoom wrapper 内
+    const zoomWrapper = fullscreenMermaidRef.value.querySelector('.mermaid-zoom-inner') || fullscreenMermaidRef.value
+    zoomWrapper.innerHTML = fixedSvg
+    fullscreenMermaidRendered = true
+  } catch (err) {
+    console.warn('Mermaid fullscreen render failed:', err)
+    const zoomWrapper = fullscreenMermaidRef.value.querySelector('.mermaid-zoom-inner') || fullscreenMermaidRef.value
+    zoomWrapper.innerHTML = `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`
+    fullscreenMermaidRendered = true
+  }
+}
+
+async function copyFullscreenCode(): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(fullscreenMermaid.value.code)
+  } catch {
+    // ignore
+  }
+}
+
+// 监听 ESC 关闭全屏
+function handleFullscreenKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && fullscreenMermaid.value.visible) {
+    closeMermaidFullscreen()
+  }
+}
 
 // markdown-it 实例：拦截 mermaid 代码块，不经过 highlight.js
 const md = new MarkdownIt({
@@ -274,13 +416,14 @@ async function renderMermaidDiagrams(container: HTMLElement): Promise<void> {
         // 修复可能的 viewBox NaN 问题
         const fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
         wrapper.innerHTML = fixedSvg
-        // 添加复制按钮
-        addCopyButtonForMermaid(wrapper)
+        // 添加工具栏
+        addMermaidToolbar(wrapper)
       } catch (err) {
         console.warn('Mermaid render failed:', err)
         wrapper.innerHTML = `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`
-        // 失败时退化为代码块，也加复制按钮
-        addCopyButtonsForCodeBlocks(wrapper)
+        // 失败时退化为代码块，添加工具栏
+        wrapper.dataset.viewMode = 'source'
+        addMermaidToolbar(wrapper)
       }
     })
     await mermaidRenderQueue
@@ -303,6 +446,8 @@ function addCopyButtonsForCodeBlocks(container: HTMLElement): void {
   const preBlocks = container.querySelectorAll<HTMLPreElement>('pre.hljs')
   for (const pre of preBlocks) {
     if (pre.querySelector('.copy-btn')) continue
+    // 跳过 mermaid 容器内的代码块（mermaid 有自己的工具栏）
+    if (pre.closest('.mermaid-container')) continue
 
     const code = pre.querySelector('code')
     if (!code) continue
@@ -329,30 +474,89 @@ function addCopyButtonsForCodeBlocks(container: HTMLElement): void {
   }
 }
 
-// 为 mermaid 容器添加复制按钮
-function addCopyButtonForMermaid(container: HTMLDivElement): void {
-  if (container.querySelector('.copy-btn')) return
+// ===== Mermaid 工具栏：切换源码/图表、复制、全屏 =====
+const MERMAID_TOGGLE_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>`
+const MERMAID_FULLSCREEN_ICON = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>`
 
-  const btn = document.createElement('button')
-  btn.className = 'copy-btn'
-  btn.dataset.state = 'copy'
-  btn.innerHTML = COPY_ICON
+function addMermaidToolbar(container: HTMLDivElement): void {
+  // 移除旧工具栏（toggle 时会重新调用）
+  const existing = container.querySelector('.mermaid-toolbar')
+  if (existing) existing.remove()
 
-  btn.addEventListener('click', async () => {
+  // 首次渲染时保存 SVG 内容
+  if (!container.dataset.viewMode) {
+    container.dataset.mermaidSvg = container.innerHTML
+    container.dataset.viewMode = 'diagram'
+  }
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'mermaid-toolbar'
+  toolbar.innerHTML = `
+    <button class="mermaid-btn toggle-btn" title="查看源码">
+      ${MERMAID_TOGGLE_ICON}
+    </button>
+    <button class="mermaid-btn copy-btn" title="复制源码">
+      ${COPY_ICON}
+    </button>
+    <button class="mermaid-btn fullscreen-btn" title="全屏查看">
+      ${MERMAID_FULLSCREEN_ICON}
+    </button>
+  `
+
+  // 切换按钮
+  const toggleBtn = toolbar.querySelector('.toggle-btn')!
+  toggleBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    toggleMermaidView(container)
+  })
+
+  // 复制按钮
+  const copyBtn = toolbar.querySelector('.copy-btn')!
+  copyBtn.addEventListener('click', async (e) => {
+    e.stopPropagation()
     const raw = decodeURIComponent(container.dataset.mermaidCode || '')
     if (!raw) return
     try {
       await navigator.clipboard.writeText(raw)
-      btn.dataset.state = 'copied'
-      setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+      copyBtn.setAttribute('data-state', 'copied')
+      setTimeout(() => copyBtn.setAttribute('data-state', 'copy'), 2000)
     } catch {
-      btn.dataset.state = 'failed'
-      setTimeout(() => { btn.dataset.state = 'copy' }, 2000)
+      copyBtn.setAttribute('data-state', 'failed')
+      setTimeout(() => copyBtn.setAttribute('data-state', 'copy'), 2000)
     }
   })
 
+  // 全屏按钮
+  const fullscreenBtn = toolbar.querySelector('.fullscreen-btn')!
+  fullscreenBtn.addEventListener('click', (e) => {
+    e.stopPropagation()
+    const code = decodeURIComponent(container.dataset.mermaidCode || '')
+    if (code) openMermaidFullscreen(code)
+  })
+
   container.style.position = 'relative'
-  container.appendChild(btn)
+  container.appendChild(toolbar)
+}
+
+function toggleMermaidView(container: HTMLDivElement): void {
+  const currentMode = container.dataset.viewMode || 'diagram'
+  const code = decodeURIComponent(container.dataset.mermaidCode || '')
+
+  if (currentMode === 'diagram') {
+    // 切换到源码视图：保存当前 SVG，替换为代码块
+    container.dataset.mermaidSvg = container.innerHTML
+    container.innerHTML = `<pre class="hljs"><code>${md.utils.escapeHtml(code)}</code></pre>`
+    container.dataset.viewMode = 'source'
+  } else {
+    // 切换到图表视图：恢复保存的 SVG
+    const svg = container.dataset.mermaidSvg
+    if (!svg) return  // 没有保存的 SVG（渲染失败等），无法切换
+    container.innerHTML = svg
+    container.dataset.viewMode = 'diagram'
+  }
+
+  // 重新添加工具栏
+  addMermaidToolbar(container)
 }
 
 // 复制按钮 SVG 图标（剪贴板）
@@ -601,6 +805,63 @@ function formatThinkingStep(step: ThinkingStep): string {
       </div>
     </div>
   </main>
+
+    <!-- Mermaid 全屏弹窗 -->
+    <Teleport to="body">
+      <div
+        v-if="fullscreenMermaid.visible"
+        class="mermaid-fullscreen-overlay"
+        @click.self="closeMermaidFullscreen"
+      >
+        <div class="mermaid-fullscreen-card">
+          <div class="mermaid-fullscreen-header">
+            <span class="mermaid-fullscreen-title">Mermaid 图表</span>
+            <div class="mermaid-fullscreen-actions">
+              <!-- 缩放控制 -->
+              <button class="mermaid-fs-btn" title="缩小" @click="fsZoomOut">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <span class="mermaid-fs-zoom-level">{{ Math.round(fsScale * 100) }}%</span>
+              <button class="mermaid-fs-btn" title="放大" @click="fsZoomIn">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+              </button>
+              <button class="mermaid-fs-btn" title="重置" @click="fsResetZoom">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+              </button>
+              <span class="mermaid-fs-divider"></span>
+              <button
+                class="mermaid-fs-btn"
+                title="复制源码"
+                @click="copyFullscreenCode"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+              </button>
+              <button
+                class="mermaid-fs-btn mermaid-fs-close"
+                title="关闭 (ESC)"
+                @click="closeMermaidFullscreen"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+          <div
+            class="mermaid-fullscreen-body"
+            @mousedown="fsStartDrag"
+            @mousemove="fsOnDrag"
+            @mouseup="fsEndDrag"
+            @mouseleave="fsEndDrag"
+            @wheel.prevent="fsOnWheel"
+          >
+            <div ref="fullscreenMermaidRef" class="mermaid-zoom-wrapper" :style="zoomTransformStyle">
+              <div class="mermaid-zoom-inner">
+                <div class="mermaid-loading">渲染图表中...</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Teleport>
 </template>
 
 <style scoped>
@@ -646,7 +907,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .welcome p {
-  font-size: 15px;
+  font-size: 16px;
   color: var(--text-secondary);
   margin: 0;
 }
@@ -677,14 +938,14 @@ function formatThinkingStep(step: ThinkingStep): string {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 40px;
+  padding: 12px 18%;
   background: var(--bg-sidebar);
   border-bottom: 1px solid var(--border-color);
   flex-wrap: wrap;
 }
 
 .kb-match-label {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-tertiary);
 }
 
@@ -693,7 +954,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   padding: 4px 10px;
   background: rgba(78, 110, 242, 0.1);
   color: var(--accent-color);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-full);
   border: 1px solid rgba(78, 110, 242, 0.2);
 }
@@ -718,7 +979,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 
 /* 消息行 */
 .message-row {
-  padding: 6px 40px;
+  padding: 6px 18%;
 }
 
 .message-content-wrapper {
@@ -789,13 +1050,13 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .message-author {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .message-time {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--text-tertiary);
 }
 
@@ -820,7 +1081,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .message-text {
-  font-size: 15px;
+  font-size: 16px;
   white-space: pre-wrap;
 }
 
@@ -832,7 +1093,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 .streaming-cursor {
   animation: blink 1s step-end infinite;
   color: var(--accent-color);
-  font-size: 15px;
+  font-size: 16px;
   font-weight: bold;
 }
 
@@ -858,7 +1119,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   padding: 2px 6px;
   background: rgba(0, 0, 0, 0.08);
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 14px;
   font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
   color: inherit;
 }
@@ -878,7 +1139,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 .assistant-bubble .markdown-body :deep(pre code) {
   display: block;
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.5;
   color: #24292f !important;
   background: #f6f8fa !important;
@@ -925,7 +1186,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   border-collapse: collapse;
   width: 100%;
   margin: 8px 0;
-  font-size: 14px;
+  font-size: 15px;
   overflow-x: auto;
   display: block;
 }
@@ -971,7 +1232,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   padding: 20px;
   text-align: center;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 /* 暗色主题下 mermaid 由 reinitialize 的 dark theme 处理 */
@@ -1002,8 +1263,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   height: 16px;
 }
 
-.assistant-bubble .markdown-body :deep(pre:hover .copy-btn),
-.assistant-bubble .markdown-body :deep(.mermaid-container:hover .copy-btn) {
+.assistant-bubble .markdown-body :deep(pre:hover .copy-btn) {
   opacity: 1;
 }
 
@@ -1022,6 +1282,63 @@ function formatThinkingStep(step: ThinkingStep): string {
   border-color: #ef4444;
 }
 
+/* ===== Mermaid 工具栏 ===== */
+.assistant-bubble .markdown-body :deep(.mermaid-toolbar) {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 2;
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-container:hover .mermaid-toolbar) {
+  opacity: 1;
+}
+
+/* 覆盖全局 .copy-btn 的 absolute 定位，让工具栏内部的按钮正常排列 */
+.assistant-bubble .markdown-body :deep(.mermaid-toolbar .copy-btn) {
+  position: static;
+  opacity: 1;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-btn) {
+  width: 28px;
+  height: 28px;
+  padding: 5px;
+  color: var(--text-tertiary);
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s, border-color 0.2s;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-btn:hover) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-btn svg) {
+  width: 16px;
+  height: 16px;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-btn.copy-btn[data-state="copied"]) {
+  color: #10b981;
+  border-color: #10b981;
+}
+
+.assistant-bubble .markdown-body :deep(.mermaid-btn.copy-btn[data-state="failed"]) {
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
 /* 引用文件 */
 .message-files {
   display: flex;
@@ -1033,7 +1350,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .files-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
 }
 
@@ -1042,7 +1359,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   padding: 2px 8px;
   background: var(--bg-hover);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-sm);
   font-family: monospace;
 }
@@ -1059,17 +1376,17 @@ function formatThinkingStep(step: ThinkingStep): string {
   padding: 4px 12px;
   background: var(--bg-hover);
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
   border-radius: var(--radius-full);
 }
 
 /* 响应式 */
 @media (max-width: 1200px) {
   .message-row {
-    padding: 6px 32px;
+    padding: 6px 12%;
   }
   .kb-match-status {
-    padding: 12px 32px;
+    padding: 12px 12%;
   }
 }
 
@@ -1121,7 +1438,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .thinking-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
   flex: 1;
@@ -1130,7 +1447,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 .thinking-step-count {
   font-weight: 400;
   color: var(--text-tertiary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .thinking-spinner {
@@ -1200,7 +1517,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .thinking-step-content {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--text-secondary);
   line-height: 1.6;
 }
@@ -1215,7 +1532,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 
 /* 思考面板内联代码 */
 .thinking-step-content :deep(code) {
-  font-size: 12px;
+  font-size: 13px;
   padding: 1px 4px;
   background: rgba(0, 0, 0, 0.08);
   border-radius: 3px;
@@ -1236,7 +1553,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 .thinking-step-content :deep(pre code) {
   display: block;
   padding: 10px 14px;
-  font-size: 12px;
+  font-size: 13px;
   line-height: 1.5;
   color: #24292f !important;
   background: #f6f8fa !important;
@@ -1318,7 +1635,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   background: var(--bg-primary);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-primary);
   white-space: nowrap;
   max-width: 240px;
@@ -1343,5 +1660,164 @@ function formatThinkingStep(step: ThinkingStep): string {
 
 .dot-nav-item:hover .dot-tooltip {
   opacity: 1;
+}
+
+/* ===== Mermaid 全屏弹窗 ===== */
+.mermaid-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  padding: 40px;
+}
+
+.mermaid-fullscreen-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 1100px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: var(--shadow-lg);
+}
+
+.mermaid-fullscreen-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.mermaid-fullscreen-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.mermaid-fullscreen-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mermaid-fs-btn {
+  width: 32px;
+  height: 32px;
+  padding: 6px;
+  color: var(--text-tertiary);
+  background: transparent;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.mermaid-fs-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.mermaid-fs-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
+.mermaid-fs-close:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+  border-color: #ef4444;
+}
+
+.mermaid-fs-zoom-level {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 44px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.mermaid-fs-divider {
+  width: 1px;
+  height: 20px;
+  background: var(--border-color);
+  margin: 0 4px;
+}
+
+.mermaid-fullscreen-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-primary);
+  position: relative;
+}
+
+.mermaid-zoom-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  will-change: transform;
+  user-select: none;
+}
+
+.mermaid-zoom-inner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mermaid-fullscreen-body .mermaid-zoom-inner svg {
+  max-width: none;
+  max-height: none;
+  height: auto;
+}
+
+.mermaid-fullscreen-body .mermaid-loading {
+  padding: 40px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: 15px;
+}
+
+.mermaid-fullscreen-body :deep(pre.hljs) {
+  width: 100%;
+  margin: 0;
+}
+
+.mermaid-fullscreen-body :deep(pre code) {
+  display: block;
+  padding: 20px;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #24292f !important;
+  background: #f6f8fa !important;
+}
+
+[data-theme="dark"] .mermaid-fullscreen-body :deep(pre code) {
+  color: #c9d1d9 !important;
+  background: #0d1117 !important;
+}
+
+/* 全屏弹窗响应式 */
+@media (max-width: 768px) {
+  .mermaid-fullscreen-overlay {
+    padding: 16px;
+  }
+
+  .mermaid-fullscreen-body {
+    padding: 20px;
+  }
 }
 </style>

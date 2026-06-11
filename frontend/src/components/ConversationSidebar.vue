@@ -418,7 +418,7 @@ async function handleExport(event: Event, id: string, title: string) {
   padding: 40px 20px;
   text-align: center;
   color: var(--text-tertiary);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 .conversation-group {
@@ -427,7 +427,7 @@ async function handleExport(event: Event, id: string, title: string) {
 
 .group-label {
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: 13px;
   color: var(--text-tertiary);
   font-weight: 500;
 }
@@ -441,7 +441,7 @@ async function handleExport(event: Event, id: string, title: string) {
   border-radius: var(--radius-md);
   cursor: pointer;
   color: var(--text-secondary);
-  font-size: 14px;
+  font-size: 15px;
   transition: all 0.15s;
   position: relative;
 }
@@ -471,7 +471,7 @@ async function handleExport(event: Event, id: string, title: string) {
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
   color: var(--text-primary);
-  font-size: 14px;
+  font-size: 15px;
   outline: none;
 }
 
@@ -546,7 +546,7 @@ async function handleExport(event: Event, id: string, title: string) {
 }
 
 .user-name {
-  font-size: 14px;
+  font-size: 15px;
   color: var(--text-primary);
 }
 
@@ -601,7 +601,7 @@ async function handleExport(event: Event, id: string, title: string) {
   background: transparent;
   border: none;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 14px;
   cursor: pointer;
   transition: all 0.15s;
   white-space: nowrap;
