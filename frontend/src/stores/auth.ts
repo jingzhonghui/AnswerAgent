@@ -6,14 +6,19 @@ import { apiLogin, apiRegister, apiGetMe } from '@/api'
 export const useAuthStore = defineStore('auth', () => {
   const router = useRouter()
 
-  const user = ref<{ id: string; username: string } | null>(null)
+  const user = ref<{ id: string; username: string; is_admin: boolean } | null>(null)
   const token = ref<string | null>(localStorage.getItem('access_token'))
 
   const isLoggedIn = computed(() => !!token.value)
+  const isAdmin = computed(() => user.value?.is_admin ?? false)
 
-  function setAuth(accessToken: string, userInfo: { id: string; username: string }) {
+  function setAuth(accessToken: string, userInfo: { id: string; username: string; is_admin?: boolean }) {
     token.value = accessToken
-    user.value = userInfo
+    user.value = {
+      id: userInfo.id,
+      username: userInfo.username,
+      is_admin: userInfo.is_admin ?? false,
+    }
     localStorage.setItem('access_token', accessToken)
   }
 
@@ -50,7 +55,11 @@ export const useAuthStore = defineStore('auth', () => {
     if (!token.value) return
     try {
       const userInfo = await apiGetMe()
-      user.value = userInfo
+      user.value = {
+        id: userInfo.id,
+        username: userInfo.username,
+        is_admin: userInfo.is_admin ?? false,
+      }
     } catch {
       // token 无效，清除登录状态
       logout()
@@ -61,6 +70,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     token,
     isLoggedIn,
+    isAdmin,
     setAuth,
     logout,
     login,

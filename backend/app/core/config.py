@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     jwt_algorithm: str = "HS256"
     jwt_expire_minutes: int = 1440  # 默认 24 小时
 
+    # 管理员配置
+    admin_default_password: str = "admin123"  # 默认管理员初始密码，首次启动时创建
+
     class Config:
         env_file = str(
             Path(__file__).parent.parent.parent / ".env"

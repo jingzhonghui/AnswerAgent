@@ -68,3 +68,34 @@ export interface ThinkingStep {
   /** 工具返回结果（仅 observation） */
   result?: string
 }
+
+// ============================================================
+// Admin 类型
+// ============================================================
+
+/** 模型配置项 */
+export interface ModelConfigItem {
+  key: string
+  value: string
+  description: string
+}
+
+/** 管理员视角的用户信息 */
+export interface AdminUserInfo {
+  id: string
+  username: string
+  is_admin: boolean
+  created_at: string
+  conversation_count: number
+}
+
+/** 管理员视角的对话摘要 */
+export interface AdminConversationSummary {
+  id: string
+  title: string
+  user_id: string | null
+  username: string | null
+  message_count: number
+  created_at: string
+  updated_at: string
+}

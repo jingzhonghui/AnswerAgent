@@ -135,6 +135,7 @@ class UserResponse(BaseModel):
     """用户信息响应"""
     id: str = Field(..., description="用户 ID")
     username: str = Field(..., description="用户名")
+    is_admin: bool = Field(default=False, description="是否为管理员")
     created_at: datetime = Field(..., description="注册时间")
 
 
@@ -143,3 +144,57 @@ class TokenResponse(BaseModel):
     access_token: str = Field(..., description="JWT 访问令牌")
     token_type: str = Field(default="bearer", description="令牌类型")
     user: UserResponse = Field(..., description="用户信息")
+
+
+# ============================================================
+# Admin request/response models
+# ============================================================
+
+class AdminUserCreate(BaseModel):
+    """管理员创建用户请求"""
+    username: str = Field(..., min_length=2, max_length=50, description="用户名")
+    password: str = Field(..., min_length=6, max_length=100, description="密码")
+    is_admin: bool = Field(default=False, description="是否设为管理员")
+
+
+class AdminUserUpdate(BaseModel):
+    """管理员更新用户请求"""
+    is_admin: Optional[bool] = Field(None, description="是否设为管理员")
+
+
+class AdminUserInfo(BaseModel):
+    """管理员视角的用户信息"""
+    id: str = Field(..., description="用户 ID")
+    username: str = Field(..., description="用户名")
+    is_admin: bool = Field(default=False, description="是否为管理员")
+    created_at: datetime = Field(..., description="注册时间")
+    conversation_count: int = Field(default=0, description="对话数量")
+
+
+class ChangePasswordRequest(BaseModel):
+    """修改密码请求"""
+    old_password: str = Field(..., description="旧密码")
+    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+
+
+class ModelConfigItem(BaseModel):
+    """模型配置项"""
+    key: str = Field(..., description="配置键")
+    value: str = Field(default="", description="配置值")
+    description: str = Field(default="", description="配置说明")
+
+
+class ModelConfigUpdate(BaseModel):
+    """批量更新模型配置请求"""
+    configs: List[ModelConfigItem] = Field(..., description="配置项列表")
+
+
+class AdminConversationSummary(BaseModel):
+    """管理员视角的对话摘要（含用户信息）"""
+    id: str = Field(..., description="对话 ID")
+    title: str = Field(..., description="对话标题")
+    user_id: Optional[str] = Field(None, description="所属用户 ID")
+    username: Optional[str] = Field(None, description="所属用户名")
+    message_count: int = Field(default=0, description="消息数量")
+    created_at: datetime = Field(..., description="创建时间")
+    updated_at: datetime = Field(..., description="更新时间")

@@ -5,6 +5,9 @@ import type {
   Conversation,
   CreateConversationResponse,
   RenameConversationRequest,
+  ModelConfigItem,
+  AdminUserInfo,
+  AdminConversationSummary,
 } from '@/types'
 
 // axios 实例配置
@@ -31,7 +34,13 @@ api.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('access_token')
-      window.location.href = '/#/login'
+      // 根据当前所在页面跳转到对应的登录页
+      const hash = window.location.hash
+      if (hash.includes('/admin')) {
+        window.location.href = '/#/admin/login'
+      } else {
+        window.location.href = '/#/login'
+      }
     }
     console.error('API Error:', error)
     return Promise.reject(error)
@@ -170,6 +179,7 @@ export async function streamChat(
 export interface AuthUser {
   id: string
   username: string
+  is_admin?: boolean
 }
 
 export interface AuthTokenResponse {
@@ -191,6 +201,73 @@ export async function apiRegister(username: string, password: string): Promise<A
 export async function apiGetMe(): Promise<AuthUser> {
   const response = await api.get<AuthUser>('/auth/me')
   return response.data
+}
+
+// 修改密码
+export interface ChangePasswordRequest {
+  old_password: string
+  new_password: string
+}
+
+export async function apiChangePassword(data: ChangePasswordRequest): Promise<{ message: string }> {
+  const response = await api.post<{ message: string }>('/auth/change-password', data)
+  return response.data
+}
+
+// ============================================================
+// Admin API
+// ============================================================
+
+// 获取模型配置
+export async function getModelConfig(): Promise<{ configs: ModelConfigItem[] }> {
+  const response = await api.get<{ configs: ModelConfigItem[] }>('/admin/model-config')
+  return response.data
+}
+
+// 更新模型配置
+export async function updateModelConfig(configs: { key: string; value: string }[]): Promise<{ message: string }> {
+  const response = await api.put<{ message: string }>('/admin/model-config', { configs })
+  return response.data
+}
+
+// 获取用户列表
+export async function getAdminUsers(): Promise<AdminUserInfo[]> {
+  const response = await api.get<AdminUserInfo[]>('/admin/users')
+  return response.data
+}
+
+// 管理员创建用户
+export async function createAdminUser(data: { username: string; password: string; is_admin: boolean }): Promise<AdminUserInfo> {
+  const response = await api.post<AdminUserInfo>('/admin/users', data)
+  return response.data
+}
+
+// 更新用户（设置/取消管理员）
+export async function updateAdminUser(userId: string, data: { is_admin: boolean }): Promise<AdminUserInfo> {
+  const response = await api.put<AdminUserInfo>(`/admin/users/${userId}`, data)
+  return response.data
+}
+
+// 删除用户
+export async function deleteAdminUser(userId: string): Promise<void> {
+  await api.delete(`/admin/users/${userId}`)
+}
+
+// 获取所有对话（管理员视角）
+export async function getAdminConversations(params?: { user_id?: string; search?: string }): Promise<AdminConversationSummary[]> {
+  const response = await api.get<AdminConversationSummary[]>('/admin/conversations', { params })
+  return response.data
+}
+
+// 查看任意对话详情
+export async function getAdminConversation(id: string): Promise<Conversation> {
+  const response = await api.get<Conversation>(`/admin/conversations/${id}`)
+  return response.data
+}
+
+// 删除任意对话
+export async function deleteAdminConversation(id: string): Promise<void> {
+  await api.delete(`/admin/conversations/${id}`)
 }
 
 export default api

@@ -40,12 +40,13 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
     )
 
 
-def create_access_token(user_id: str, username: str) -> str:
+def create_access_token(user_id: str, username: str, is_admin: bool = False) -> str:
     """创建 JWT 访问令牌
 
     Args:
         user_id: 用户 UUID
         username: 用户名
+        is_admin: 是否为管理员
 
     Returns:
         str: 编码后的 JWT 字符串
@@ -56,6 +57,7 @@ def create_access_token(user_id: str, username: str) -> str:
     payload = {
         "sub": user_id,
         "username": username,
+        "is_admin": is_admin,
         "exp": expire,
     }
     return jwt.encode(

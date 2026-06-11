@@ -7,7 +7,8 @@ import uvicorn
 
 from core.config import settings
 from core.database import init_db
-from api import conversations, knowledge_bases, chat, auth
+from core import model_config
+from api import conversations, knowledge_bases, chat, auth, admin
 
 
 # 配置统一日志
@@ -41,12 +42,19 @@ app.include_router(conversations.router)
 app.include_router(knowledge_bases.router)
 app.include_router(chat.router)
 app.include_router(auth.router)
+app.include_router(admin.router)
 
 
 @app.on_event("startup")
 async def startup():
     """应用启动时初始化"""
+    # 1. 从 .env 初始化模型配置默认值（同步）
+    model_config.init_from_settings()
+    # 2. 初始化数据库（含默认管理员创建）
     await init_db()
+    # 3. 从 DB 加载模型配置覆盖默认值（如管理员已通过界面修改过）
+    await model_config.load_from_db()
+    # 4. 确保数据目录存在
     settings.ensure_directories()
 
 
