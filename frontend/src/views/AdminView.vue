@@ -36,6 +36,13 @@ function backToChat() {
   router.push('/chat')
 }
 
+function handleLogout() {
+  authStore.token = null
+  authStore.user = null
+  localStorage.removeItem('access_token')
+  router.push('/admin/login')
+}
+
 function openPasswordModal() {
   passwordForm.value = { oldPassword: '', newPassword: '', confirmPassword: '' }
   passwordMessage.value = ''
@@ -69,9 +76,7 @@ async function handleChangePassword() {
   isChangingPassword.value = true
   try {
     await apiChangePassword({ old_password: oldPassword, new_password: newPassword })
-    passwordMessage.value = '密码修改成功'
-    passwordMessageType.value = 'success'
-    setTimeout(() => { showPasswordModal.value = false }, 1500)
+    showPasswordModal.value = false
   } catch (e: any) {
     passwordMessage.value = e?.response?.data?.detail || '密码修改失败'
     passwordMessageType.value = 'error'
@@ -109,6 +114,9 @@ async function handleChangePassword() {
         </button>
         <button class="footer-btn back-btn" @click="backToChat">
           ← 返回聊天
+        </button>
+        <button class="footer-btn logout-btn" @click="handleLogout">
+          🚪 退出登录
         </button>
       </div>
     </aside>
@@ -297,6 +305,18 @@ async function handleChangePassword() {
   background: var(--bg-hover);
   color: var(--accent-color);
   border-color: var(--accent-color);
+}
+
+.logout-btn:hover {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
+[data-theme="dark"] .logout-btn:hover {
+  background: #7f1d1d;
+  color: #fca5a5;
+  border-color: #fca5a5;
 }
 
 .admin-main {

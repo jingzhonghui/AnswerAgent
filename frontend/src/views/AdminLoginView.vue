@@ -61,9 +61,6 @@ async function handleLogin() {
 
 <template>
   <div class="admin-login-page">
-    <!-- 背景装饰 -->
-    <div class="bg-grid"></div>
-
     <div class="login-card">
       <div class="card-header">
         <div class="shield-icon">
@@ -125,17 +122,6 @@ async function handleLogin() {
   background: var(--bg-primary);
   position: relative;
   overflow: hidden;
-}
-
-/* 网格背景 */
-.bg-grid {
-  position: absolute;
-  inset: 0;
-  background-image:
-    linear-gradient(var(--border-color) 1px, transparent 1px),
-    linear-gradient(90deg, var(--border-color) 1px, transparent 1px);
-  background-size: 48px 48px;
-  mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black, transparent);
 }
 
 .login-card {
