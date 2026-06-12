@@ -84,6 +84,19 @@ class ChatStreamRequest(BaseModel):
     mode: str = Field(default="default", description="Chat mode: 'default', 'deep', or 'agent'")
 
 
+class HistoryMessage(BaseModel):
+    """历史消息（外部接口传入）"""
+    role: str = Field(..., pattern="^(user|assistant)$", description="消息角色")
+    content: str = Field(..., min_length=1, description="消息内容")
+
+
+class ExternalChatRequest(BaseModel):
+    """免登录外部流式聊天请求"""
+    message: str = Field(..., min_length=1, description="用户消息内容")
+    mode: str = Field(default="default", pattern="^(default|deep)$", description="聊天模式")
+    history: List[HistoryMessage] = Field(default_factory=list, description="可选历史消息")
+
+
 class SseKbMatched(BaseModel):
     """SSE event: knowledge bases matched."""
     type: str = "kb_matched"
