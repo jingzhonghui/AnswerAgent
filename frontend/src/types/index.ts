@@ -78,6 +78,8 @@ export interface ModelConfigItem {
   key: string
   value: string
   description: string
+  sensitive?: boolean
+  restart_required?: boolean
 }
 
 /** 管理员视角的用户信息 */

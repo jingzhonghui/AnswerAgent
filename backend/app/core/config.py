@@ -39,9 +39,7 @@ class Settings(BaseSettings):
     admin_default_password: str = "admin123"  # 默认管理员初始密码，首次启动时创建
 
     class Config:
-        env_file = str(
-            Path(__file__).parent.parent.parent / ".env"
-        )  # backend/.env，相对于 config.py(->core->app->backend)
+        # .env 文件已移除，所有配置通过数据库 model_config 表管理
         env_file_encoding = "utf-8"
         case_sensitive = False
 

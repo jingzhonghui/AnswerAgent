@@ -27,8 +27,8 @@ from core.chat_manager import (
 )
 from core.database import get_db
 from core.deps import get_current_admin_user
-from core.model_config import get_all as mc_get_all, update_batch as mc_update_batch
-from core.model_config import MODEL_CONFIG_KEYS
+from core.model_config import get_all_public as mc_get_all_public, update_batch as mc_update_batch
+from core.model_config import MODEL_CONFIG_KEYS, _SENSITIVE_KEYS
 from core.security import hash_password, create_access_token
 from models.schemas import (
     AdminUserCreate,
@@ -47,8 +47,8 @@ router = APIRouter(prefix="/api/admin", tags=["admin"])
 
 @router.get("/model-config")
 async def get_model_config(admin: dict = Depends(get_current_admin_user)):
-    """获取全部模型配置（含描述）"""
-    return {"configs": mc_get_all()}
+    """获取全部模型配置（含描述，敏感键不出现在返回中）"""
+    return {"configs": mc_get_all_public()}
 
 
 @router.put("/model-config")
@@ -70,6 +70,11 @@ async def update_model_config(
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"未知的配置键: {item.key}",
+            )
+        if item.key in _SENSITIVE_KEYS:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"配置项 {item.key} 不允许通过 API 修改",
             )
         updates[item.key] = item.value
 

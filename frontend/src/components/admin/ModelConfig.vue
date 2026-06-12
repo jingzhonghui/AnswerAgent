@@ -12,6 +12,15 @@ const messageType = ref<'success' | 'error'>('success')
 // 敏感字段（API Key）显示为密码框
 const sensitiveKeys = new Set(['api_key', 'deep_api_key'])
 
+// 需要重启才能生效的配置项
+const restartRequiredKeys = new Set(['knowledge_path', 'data_path'])
+
+// 系统配置键（非 LLM 配置）
+const systemConfigKeys = new Set(['history_window', 'knowledge_path', 'data_path', 'jwt_algorithm', 'jwt_expire_minutes'])
+
+// LLM 默认模型配置键（不含 deep_ 前缀）
+const llmConfigKeys = new Set(['llm_provider', 'api_key', 'base_url', 'model', 'temperature'])
+
 // 下拉选择字段
 const selectFields: Record<string, { value: string; label: string }[]> = {
   llm_provider: [
@@ -26,6 +35,11 @@ const selectFields: Record<string, { value: string; label: string }[]> = {
   deep_model_enabled: [
     { value: 'true', label: '启用' },
     { value: 'false', label: '禁用' },
+  ],
+  jwt_algorithm: [
+    { value: 'HS256', label: 'HS256' },
+    { value: 'HS384', label: 'HS384' },
+    { value: 'HS512', label: 'HS512' },
   ],
 }
 
@@ -105,7 +119,7 @@ function getInputType(key: string): string {
       <!-- 默认模型 -->
       <section class="config-section">
         <h2>默认模型</h2>
-        <div v-for="cfg in configs.filter(c => !c.key.startsWith('deep_'))" :key="cfg.key" class="form-group">
+        <div v-for="cfg in configs.filter(c => llmConfigKeys.has(c.key))" :key="cfg.key" class="form-group">
           <label :for="cfg.key">{{ cfg.key }}</label>
           <select
             v-if="isSelectField(cfg.key)"
@@ -133,7 +147,10 @@ function getInputType(key: string): string {
         <h2>深度思考模型</h2>
         <p class="section-desc">深度思考模式使用独立的模型配置，可与默认模型完全不同</p>
         <div v-for="cfg in configs.filter(c => c.key.startsWith('deep_'))" :key="cfg.key" class="form-group">
-          <label :for="cfg.key">{{ cfg.key }}</label>
+          <label :for="cfg.key">
+            {{ cfg.key }}
+            <span v-if="cfg.restart_required" class="restart-badge">⚠️ 需重启</span>
+          </label>
           <select
             v-if="isSelectField(cfg.key)"
             :id="cfg.key"
@@ -149,6 +166,45 @@ function getInputType(key: string): string {
             :id="cfg.key"
             v-model="cfg.value"
             :type="getInputType(cfg.key)"
+            class="form-input"
+          />
+          <span class="form-hint">{{ cfg.description }}</span>
+        </div>
+      </section>
+
+      <!-- 系统配置 -->
+      <section v-if="configs.some(c => systemConfigKeys.has(c.key))" class="config-section">
+        <h2>系统配置</h2>
+        <p class="section-desc">通用系统设置（带 ⚠️ 标记的项需重启服务后生效）</p>
+        <div v-for="cfg in configs.filter(c => systemConfigKeys.has(c.key))" :key="cfg.key" class="form-group">
+          <label :for="cfg.key">
+            {{ cfg.key }}
+            <span v-if="cfg.restart_required" class="restart-badge">⚠️ 需重启</span>
+          </label>
+          <select
+            v-if="isSelectField(cfg.key)"
+            :id="cfg.key"
+            v-model="cfg.value"
+            class="form-select"
+          >
+            <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
+              {{ opt.label }}
+            </option>
+          </select>
+          <input
+            v-else-if="cfg.key === 'history_window'"
+            :id="cfg.key"
+            v-model.number="cfg.value"
+            type="number"
+            min="1"
+            max="50"
+            class="form-input"
+          />
+          <input
+            v-else
+            :id="cfg.key"
+            v-model="cfg.value"
+            type="text"
             class="form-input"
           />
           <span class="form-hint">{{ cfg.description }}</span>
@@ -336,5 +392,22 @@ function getInputType(key: string): string {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 4px;
+}
+
+.restart-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 500;
+  color: #d97706;
+  background: #fef3c7;
+  padding: 1px 6px;
+  border-radius: 4px;
+  margin-left: 6px;
+  font-family: inherit;
+}
+
+[data-theme="dark"] .restart-badge {
+  color: #fbbf24;
+  background: #78350f;
 }
 </style>
