@@ -17,10 +17,10 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder, PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough
-from langchain_core.tools import tool
 from langchain_classic.agents import create_react_agent, create_tool_calling_agent, AgentExecutor
 
 from core.llm_factory import create_chat_llm
+from core.agent_tools import build_knowledge_search_tool
 
 
 KB_SYSTEM_TEMPLATE = """\
@@ -170,43 +170,6 @@ DEEP_SYSTEM_PROMPT = """\
 可用 Mermaid 类型：graph、flowchart、sequenceDiagram、classDiagram、pie、mindmap"""
 
 
-def _build_knowledge_search_tool(kb_context: str):
-    """构建知识库搜索工具（供 ReAct Agent 调用）
-
-    Args:
-        kb_context: 所有知识库文件的合并内容
-
-    Returns:
-        Tool: LangChain Tool 实例
-    """
-    @tool
-    def knowledge_search(query: str) -> str:
-        """从本地知识库文件中搜索与 query 相关的信息。
-
-        在回答用户问题前，调用此工具来获取知识库中的相关信息。
-        query 应该是你要查找的关键词或问题描述。
-        """
-        if not kb_context.strip():
-            return "（知识库未命中或无可用文件）"
-        lines = kb_context.splitlines()
-        # 简单的关键词匹配搜索
-        keywords = query.lower().split()
-        matched = []
-        for i, line in enumerate(lines):
-            line_lower = line.lower()
-            if any(kw in line_lower for kw in keywords if kw):
-                start = max(0, i - 2)
-                end = min(len(lines), i + 3)
-                snippet = "\n".join(lines[start:end])
-                matched.append(f"...[行 {start+1}-{end}]\n{snippet}")
-        result = "\n\n".join(matched[:15])
-        if not result:
-            return f"未找到与 '{query}' 直接相关的内容。\n\n知识库文件概览:\n{lines[:50]}"
-        return result
-
-    return knowledge_search
-
-
 def build_deep_chain(context: str, callbacks: list = None):
     """构建深度思考 Tool-Calling Agent 链
 
@@ -222,7 +185,7 @@ def build_deep_chain(context: str, callbacks: list = None):
         AgentExecutor: 可调用 chain.invoke({"input": ..., "chat_history": [...]})
     """
     llm = create_chat_llm(streaming=True, reasoning=True)
-    kb_tool = _build_knowledge_search_tool(context)
+    kb_tool = build_knowledge_search_tool(context)
     tools = [kb_tool]
 
     # Tool-Calling Agent 使用 ChatPromptTemplate
