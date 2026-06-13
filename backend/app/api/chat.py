@@ -114,7 +114,7 @@ async def _stream_deep(
         async for msg in stream.messages:
             async for delta in msg.text:
                 await queue.put(("token", delta))
-            finalized = await msg.tool_calls.get()
+            finalized = await msg.tool_calls
             if finalized:
                 for tc in finalized:
                     await queue.put(("agent_think", tc))

@@ -312,10 +312,29 @@ async function renderFullscreenMermaid(): Promise<void> {
   const id = `mermaid-fullscreen-${++mermaidIdCounter}`
   try {
     const { svg } = await mermaid.render(id, code)
-    const fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
+    // 只移除根 <svg> 的固定宽高，让 CSS 按全屏容器自适应缩放；
+    // 不能全局删除 width/height，否则会破坏 Mermaid 内部 rect/label 布局。
+    let fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
+    fixedSvg = fixedSvg.replace(/<svg\b([^>]*)>/, (svgTag) =>
+      svgTag.replace(/\s(width|height)="[^"]*"/g, '')
+    )
     // 渲染到 zoom wrapper 内
     const zoomWrapper = fullscreenMermaidRef.value.querySelector('.mermaid-zoom-inner') || fullscreenMermaidRef.value
     zoomWrapper.innerHTML = fixedSvg
+
+    // 动态插入的 SVG 不一定能被 scoped CSS 命中，直接设置属性更可靠
+    const svgEl = zoomWrapper.querySelector('svg')
+    if (svgEl) {
+      svgEl.removeAttribute('width')
+      svgEl.removeAttribute('height')
+      svgEl.setAttribute('preserveAspectRatio', 'xMidYMid meet')
+      svgEl.style.width = '100%'
+      svgEl.style.height = '100%'
+      svgEl.style.maxWidth = '100%'
+      svgEl.style.maxHeight = '100%'
+      svgEl.style.display = 'block'
+    }
+
     fullscreenMermaidRendered = true
   } catch (err) {
     console.warn('Mermaid fullscreen render failed:', err)
@@ -1680,7 +1699,7 @@ function formatThinkingStep(step: ThinkingStep): string {
   border-radius: var(--radius-lg);
   width: 100%;
   max-width: 1100px;
-  max-height: 90vh;
+  height: 90vh;
   display: flex;
   flex-direction: column;
   box-shadow: var(--shadow-lg);
@@ -1755,6 +1774,7 @@ function formatThinkingStep(step: ThinkingStep): string {
 
 .mermaid-fullscreen-body {
   flex: 1;
+  min-height: 0;
   overflow: hidden;
   padding: 32px;
   display: flex;
@@ -1765,6 +1785,8 @@ function formatThinkingStep(step: ThinkingStep): string {
 }
 
 .mermaid-zoom-wrapper {
+  width: 100%;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1778,10 +1800,17 @@ function formatThinkingStep(step: ThinkingStep): string {
   justify-content: center;
 }
 
-.mermaid-fullscreen-body .mermaid-zoom-inner svg {
-  max-width: none;
-  max-height: none;
-  height: auto;
+.mermaid-fullscreen-body .mermaid-zoom-inner {
+  width: 100%;
+  height: 100%;
+}
+
+.mermaid-fullscreen-body .mermaid-zoom-inner :deep(svg) {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100%;
+  max-height: 100%;
+  display: block;
 }
 
 .mermaid-fullscreen-body .mermaid-loading {
