@@ -399,7 +399,7 @@ class WorkflowEngine:
             # === 执行阶段 ===
             if stage == "executing":
                 self._log(task_id, "=== 执行阶段 ===")
-                await self._update_status(task_id, "executing", stage="executing")
+                await self._update_status(task_id, "executing", stage="executing", error="")
 
                 row = await self._load_task(task_id)
                 knowledge_name = row.get("knowledge_name", "unknown")
@@ -497,6 +497,7 @@ class WorkflowEngine:
                     task_id, "completed", stage="completed",
                     result_path=result_path,
                     completed_tasks=result_completed,
+                    error="",
                 )
 
             self._log(task_id, f"=== 工作流完成 ===")

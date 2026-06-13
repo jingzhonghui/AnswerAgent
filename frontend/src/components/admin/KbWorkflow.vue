@@ -21,6 +21,7 @@ const inputValue = ref('')
 const uploadFile = ref<File | null>(null)
 const isStarting = ref(false)
 const error = ref('')
+const showModal = ref(false)
 
 const workflows = ref<WorkflowTask[]>([])
 const hasRunning = ref(false)
@@ -132,6 +133,8 @@ async function handleStart() {
 
     activeTaskId.value = result.task_id
     logs.value = []
+    showModal.value = false
+    resetForm()
     await loadWorkflows()
     await pollStatus()
     connectLogStream()
@@ -140,6 +143,23 @@ async function handleStart() {
   } finally {
     isStarting.value = false
   }
+}
+
+function resetForm() {
+  inputValue.value = ''
+  uploadFile.value = null
+  error.value = ''
+}
+
+function openModal() {
+  if (hasRunning.value) return
+  error.value = ''
+  showModal.value = true
+}
+
+function closeModal() {
+  showModal.value = false
+  error.value = ''
 }
 
 async function handlePause() {
@@ -156,6 +176,11 @@ async function handleResume() {
   if (!activeTaskId.value) return
   try {
     await resumeWorkflow(activeTaskId.value)
+    // 清除旧的任务错误信息
+    if (activeTask.value) {
+      activeTask.value.error = null
+    }
+    error.value = ''
     logs.value = []
     connectLogStream()
     await pollStatus()
@@ -341,72 +366,15 @@ onUnmounted(() => {
             暂无工作流
           </div>
         </div>
+        <button
+          class="btn-new-task"
+          :disabled="hasRunning"
+          @click="openModal"
+        >+ 新建任务</button>
       </div>
 
-      <!-- 右侧：主内容区 -->
+      <!-- 右侧：详情区域 -->
       <div class="workflow-main">
-        <!-- 输入面板 -->
-        <div class="input-panel" :class="{ disabled: hasRunning }">
-          <h3 class="panel-title">新建知识库生成任务</h3>
-
-          <div v-if="hasRunning" class="running-notice">
-            当前有工作流正在执行，请等待完成后再创建新任务
-          </div>
-
-          <div class="input-type-selector">
-            <label
-              v-for="opt in [
-                { key: 'local_path', label: '本地路径' },
-                { key: 'git_url', label: 'Git 地址' },
-                { key: 'archive', label: '上传压缩包' },
-              ]"
-              :key="opt.key"
-              class="type-option"
-              :class="{ active: inputType === opt.key && !hasRunning }"
-            >
-              <input
-                type="radio"
-                :value="opt.key"
-                v-model="inputType"
-                class="type-radio"
-                :disabled="hasRunning"
-              />
-              {{ opt.label }}
-            </label>
-          </div>
-
-          <div class="input-row">
-            <input
-              v-if="inputType !== 'archive'"
-              v-model="inputValue"
-              type="text"
-              class="value-input"
-              :placeholder="inputType === 'git_url' ? '输入 Git 仓库地址，如 https://github.com/...' : '输入服务器上的目录路径，如 /data/projects/...'"
-              :disabled="isStarting || hasRunning"
-              @keyup.enter="handleStart"
-            />
-            <div v-else class="file-upload-row">
-              <input
-                type="file"
-                accept=".zip,.tar.gz,.tgz,.gz"
-                class="file-input"
-                @change="handleFileChange"
-                :disabled="isStarting || hasRunning"
-              />
-              <span v-if="uploadFile" class="file-name">{{ uploadFile.name }}</span>
-            </div>
-            <button
-              class="btn btn-start"
-              :disabled="isStarting || hasRunning"
-              @click="handleStart"
-            >
-              {{ isStarting ? '启动中...' : '开始生成' }}
-            </button>
-          </div>
-
-          <div v-if="error" class="error-msg">{{ error }}</div>
-        </div>
-
         <!-- 进度面板 -->
         <div v-if="activeTask" class="progress-panel">
           <div class="progress-header">
@@ -483,7 +451,77 @@ onUnmounted(() => {
         </div>
 
         <div v-if="!activeTask" class="empty-state">
-          <p>选择一个已有工作流查看详情，或填写上方表单创建新任务</p>
+          <p>选择一个已有工作流查看详情，或点击左侧「+ 新建」创建新任务</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗：新建任务 -->
+    <div v-if="showModal" class="modal-overlay" @click.self="closeModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3>新建知识库生成任务</h3>
+          <button class="modal-close" @click="closeModal">×</button>
+        </div>
+
+        <div v-if="hasRunning" class="running-notice">
+          当前有工作流正在执行，请等待完成后再创建新任务
+        </div>
+
+        <div class="input-type-selector">
+          <label
+            v-for="opt in [
+              { key: 'local_path', label: '本地路径' },
+              { key: 'git_url', label: 'Git 地址' },
+              { key: 'archive', label: '上传压缩包' },
+            ]"
+            :key="opt.key"
+            class="type-option"
+            :class="{ active: inputType === opt.key }"
+          >
+            <input
+              type="radio"
+              :value="opt.key"
+              v-model="inputType"
+              class="type-radio"
+            />
+            {{ opt.label }}
+          </label>
+        </div>
+
+        <div class="input-row">
+          <input
+            v-if="inputType !== 'archive'"
+            v-model="inputValue"
+            type="text"
+            class="value-input"
+            :placeholder="inputType === 'git_url' ? '输入 Git 仓库地址，如 https://github.com/...' : '输入服务器上的目录路径，如 /data/projects/...'"
+            :disabled="isStarting"
+            @keyup.enter="handleStart"
+          />
+          <div v-else class="file-upload-row">
+            <input
+              type="file"
+              accept=".zip,.tar.gz,.tgz,.gz"
+              class="file-input"
+              @change="handleFileChange"
+              :disabled="isStarting"
+            />
+            <span v-if="uploadFile" class="file-name">{{ uploadFile.name }}</span>
+          </div>
+        </div>
+
+        <div v-if="error" class="error-msg">{{ error }}</div>
+
+        <div class="modal-footer">
+          <button class="btn btn-cancel" @click="closeModal">取消</button>
+          <button
+            class="btn btn-start"
+            :disabled="isStarting"
+            @click="handleStart"
+          >
+            {{ isStarting ? '启动中...' : '开始生成' }}
+          </button>
         </div>
       </div>
     </div>
@@ -507,7 +545,8 @@ onUnmounted(() => {
   min-width: 260px;
   border-right: 1px solid var(--border-color);
   padding-right: 16px;
-  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
 }
 
 .sidebar-title {
@@ -517,10 +556,37 @@ onUnmounted(() => {
   margin: 0 0 12px;
 }
 
+.btn-new-task {
+  width: 100%;
+  padding: 10px 18px;
+  border: none;
+  border-top: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+  margin-top: 12px;
+}
+
+.btn-new-task:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-new-task:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .workflow-list {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
+  overflow-y: auto;
+  min-height: 0;
 }
 
 .workflow-item {
@@ -608,17 +674,68 @@ onUnmounted(() => {
   overflow-y: auto;
 }
 
-/* 输入面板 */
-.input-panel {
+/* 弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-content {
   background: var(--bg-sidebar);
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
-  padding: 20px;
+  padding: 24px;
+  width: 520px;
+  max-width: 90vw;
+  max-height: 80vh;
+  overflow-y: auto;
 }
 
-.input-panel.disabled {
-  opacity: 0.6;
-  pointer-events: none;
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.modal-header h3 {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.modal-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-color);
 }
 
 .running-notice {
@@ -635,13 +752,6 @@ onUnmounted(() => {
   background: #78350f;
   color: #fde68a;
   border-color: #a16207;
-}
-
-.panel-title {
-  font-size: 15px;
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0 0 14px;
 }
 
 .input-type-selector {

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { getModelConfig, updateModelConfig } from '@/api'
 import type { ModelConfigItem } from '@/types'
 
@@ -20,6 +20,22 @@ const systemConfigKeys = new Set(['history_window', 'knowledge_path', 'data_path
 
 // LLM 默认模型配置键（不含 deep_ 前缀）
 const llmConfigKeys = new Set(['llm_provider', 'api_key', 'base_url', 'model', 'temperature'])
+
+// 抽屉展开状态
+const expandedDrawers = ref<Record<string, boolean>>({
+  default: true,
+  deep: false,
+  system: false,
+})
+
+function toggleDrawer(key: string) {
+  expandedDrawers.value[key] = !expandedDrawers.value[key]
+}
+
+// 分组后的配置
+const defaultConfigs = computed(() => configs.value.filter(c => llmConfigKeys.has(c.key)))
+const deepConfigs = computed(() => configs.value.filter(c => c.key.startsWith('deep_')))
+const sysConfigs = computed(() => configs.value.filter(c => systemConfigKeys.has(c.key)))
 
 // 下拉选择字段
 const selectFields: Record<string, { value: string; label: string }[]> = {
@@ -115,101 +131,125 @@ function getInputType(key: string): string {
 
     <div v-if="isLoading" class="loading">加载中...</div>
 
-    <div v-else class="config-sections">
+    <div v-else class="drawers">
       <!-- 默认模型 -->
-      <section class="config-section">
-        <h2>默认模型</h2>
-        <div v-for="cfg in configs.filter(c => llmConfigKeys.has(c.key))" :key="cfg.key" class="form-group">
-          <label :for="cfg.key">{{ cfg.key }}</label>
-          <select
-            v-if="isSelectField(cfg.key)"
-            :id="cfg.key"
-            v-model="cfg.value"
-            class="form-select"
-          >
-            <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <input
-            v-else
-            :id="cfg.key"
-            v-model="cfg.value"
-            :type="getInputType(cfg.key)"
-            class="form-input"
-          />
-          <span class="form-hint">{{ cfg.description }}</span>
+      <div class="drawer" :class="{ open: expandedDrawers.default }">
+        <button class="drawer-header" @click="toggleDrawer('default')">
+          <div class="drawer-title">
+            <span class="drawer-chevron">▶</span>
+            <h2>默认模型</h2>
+            <span class="drawer-badge">{{ defaultConfigs.length }} 项</span>
+          </div>
+        </button>
+        <div class="drawer-body">
+          <div v-for="cfg in defaultConfigs" :key="cfg.key" class="form-row">
+            <label :for="cfg.key">{{ cfg.key }}</label>
+            <select
+              v-if="isSelectField(cfg.key)"
+              :id="cfg.key"
+              v-model="cfg.value"
+              class="form-select"
+            >
+              <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <input
+              v-else
+              :id="cfg.key"
+              v-model="cfg.value"
+              :type="getInputType(cfg.key)"
+              class="form-input"
+            />
+            <span class="form-hint">{{ cfg.description }}</span>
+          </div>
         </div>
-      </section>
+      </div>
 
       <!-- 深度思考模型 -->
-      <section class="config-section">
-        <h2>深度思考模型</h2>
-        <p class="section-desc">深度思考模式使用独立的模型配置，可与默认模型完全不同</p>
-        <div v-for="cfg in configs.filter(c => c.key.startsWith('deep_'))" :key="cfg.key" class="form-group">
-          <label :for="cfg.key">
-            {{ cfg.key }}
-            <span v-if="cfg.restart_required" class="restart-badge">⚠️ 需重启</span>
-          </label>
-          <select
-            v-if="isSelectField(cfg.key)"
-            :id="cfg.key"
-            v-model="cfg.value"
-            class="form-select"
-          >
-            <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <input
-            v-else
-            :id="cfg.key"
-            v-model="cfg.value"
-            :type="getInputType(cfg.key)"
-            class="form-input"
-          />
-          <span class="form-hint">{{ cfg.description }}</span>
+      <div class="drawer" :class="{ open: expandedDrawers.deep }">
+        <button class="drawer-header" @click="toggleDrawer('deep')">
+          <div class="drawer-title">
+            <span class="drawer-chevron">▶</span>
+            <h2>深度思考模型</h2>
+            <span class="drawer-badge">{{ deepConfigs.length }} 项</span>
+          </div>
+          <span class="drawer-desc">深度思考模式使用独立的模型配置，可与默认模型完全不同</span>
+        </button>
+        <div class="drawer-body">
+          <div v-for="cfg in deepConfigs" :key="cfg.key" class="form-row">
+            <label :for="cfg.key">
+              {{ cfg.key }}
+              <span v-if="cfg.restart_required" class="restart-badge">需重启</span>
+            </label>
+            <select
+              v-if="isSelectField(cfg.key)"
+              :id="cfg.key"
+              v-model="cfg.value"
+              class="form-select"
+            >
+              <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <input
+              v-else
+              :id="cfg.key"
+              v-model="cfg.value"
+              :type="getInputType(cfg.key)"
+              class="form-input"
+            />
+            <span class="form-hint">{{ cfg.description }}</span>
+          </div>
         </div>
-      </section>
+      </div>
 
       <!-- 系统配置 -->
-      <section v-if="configs.some(c => systemConfigKeys.has(c.key))" class="config-section">
-        <h2>系统配置</h2>
-        <p class="section-desc">通用系统设置（带 ⚠️ 标记的项需重启服务后生效）</p>
-        <div v-for="cfg in configs.filter(c => systemConfigKeys.has(c.key))" :key="cfg.key" class="form-group">
-          <label :for="cfg.key">
-            {{ cfg.key }}
-            <span v-if="cfg.restart_required" class="restart-badge">⚠️ 需重启</span>
-          </label>
-          <select
-            v-if="isSelectField(cfg.key)"
-            :id="cfg.key"
-            v-model="cfg.value"
-            class="form-select"
-          >
-            <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
-              {{ opt.label }}
-            </option>
-          </select>
-          <input
-            v-else-if="cfg.key === 'history_window'"
-            :id="cfg.key"
-            v-model.number="cfg.value"
-            type="number"
-            min="1"
-            max="50"
-            class="form-input"
-          />
-          <input
-            v-else
-            :id="cfg.key"
-            v-model="cfg.value"
-            type="text"
-            class="form-input"
-          />
-          <span class="form-hint">{{ cfg.description }}</span>
+      <div v-if="sysConfigs.length" class="drawer" :class="{ open: expandedDrawers.system }">
+        <button class="drawer-header" @click="toggleDrawer('system')">
+          <div class="drawer-title">
+            <span class="drawer-chevron">▶</span>
+            <h2>系统配置</h2>
+            <span class="drawer-badge">{{ sysConfigs.length }} 项</span>
+          </div>
+          <span class="drawer-desc">通用系统设置（带"需重启"标记的项需重启服务后生效）</span>
+        </button>
+        <div class="drawer-body">
+          <div v-for="cfg in sysConfigs" :key="cfg.key" class="form-row">
+            <label :for="cfg.key">
+              {{ cfg.key }}
+              <span v-if="cfg.restart_required" class="restart-badge">需重启</span>
+            </label>
+            <select
+              v-if="isSelectField(cfg.key)"
+              :id="cfg.key"
+              v-model="cfg.value"
+              class="form-select"
+            >
+              <option v-for="opt in getSelectOptions(cfg.key)" :key="opt.value" :value="opt.value">
+                {{ opt.label }}
+              </option>
+            </select>
+            <input
+              v-else-if="cfg.key === 'history_window'"
+              :id="cfg.key"
+              v-model.number="cfg.value"
+              type="number"
+              min="1"
+              max="50"
+              class="form-input"
+            />
+            <input
+              v-else
+              :id="cfg.key"
+              v-model="cfg.value"
+              type="text"
+              class="form-input"
+            />
+            <span class="form-hint">{{ cfg.description }}</span>
+          </div>
         </div>
-      </section>
+      </div>
     </div>
   </div>
 </template>
@@ -242,6 +282,7 @@ function getInputType(key: string): string {
 .actions {
   display: flex;
   gap: 8px;
+  flex-shrink: 0;
 }
 
 .btn {
@@ -310,39 +351,96 @@ function getInputType(key: string): string {
   font-size: 14px;
 }
 
-.config-sections {
+/* ============================================================
+   抽屉布局
+   ============================================================ */
+
+.drawers {
   display: flex;
   flex-direction: column;
-  gap: 32px;
-}
-
-.config-section {
-  background: var(--bg-sidebar);
+  gap: 2px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-md);
-  padding: 24px;
+  overflow: hidden;
+  background: var(--border-color);
 }
 
-.config-section h2 {
-  font-size: 16px;
-  font-weight: 600;
+.drawer {
+  background: var(--bg-sidebar);
+}
+
+.drawer-header {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 20px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  text-align: left;
   color: var(--text-primary);
-  margin: 0 0 6px;
+  transition: background 0.15s;
 }
 
-.section-desc {
+.drawer-header:hover {
+  background: var(--bg-hover);
+}
+
+.drawer-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.drawer-title h2 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.drawer-chevron {
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: transform 0.2s;
+  display: inline-block;
+  width: 14px;
+}
+
+.drawer.open .drawer-chevron {
+  transform: rotate(90deg);
+}
+
+.drawer-badge {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  background: var(--bg-active);
+  padding: 1px 8px;
+  border-radius: 10px;
+}
+
+.drawer-desc {
   font-size: 12px;
   color: var(--text-tertiary);
-  margin: 0 0 20px;
+  padding-left: 24px;
 }
 
-.form-group {
-  margin-top: 16px;
+.drawer-body {
+  display: none;
+  padding: 0 20px 20px;
 }
 
-.form-group label {
+.drawer.open .drawer-body {
   display: block;
-  font-size: 13px;
+}
+
+.form-row {
+  margin-top: 14px;
+}
+
+.form-row label {
+  display: block;
+  font-size: 12px;
   font-weight: 500;
   color: var(--text-secondary);
   margin-bottom: 4px;
@@ -351,7 +449,7 @@ function getInputType(key: string): string {
 
 .form-input {
   width: 100%;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -369,7 +467,7 @@ function getInputType(key: string): string {
 
 .form-select {
   width: 100%;
-  padding: 8px 12px;
+  padding: 7px 10px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-sm);
   background: var(--bg-primary);
@@ -391,18 +489,18 @@ function getInputType(key: string): string {
   display: block;
   font-size: 11px;
   color: var(--text-tertiary);
-  margin-top: 4px;
+  margin-top: 3px;
 }
 
 .restart-badge {
   display: inline-block;
-  font-size: 11px;
+  font-size: 10px;
   font-weight: 500;
   color: #d97706;
   background: #fef3c7;
-  padding: 1px 6px;
-  border-radius: 4px;
-  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  margin-left: 4px;
   font-family: inherit;
 }
 

@@ -192,7 +192,8 @@ function formatDate(dateStr: string): string {
 
 <style scoped>
 .page {
-  max-width: 900px;
+  width: 100%;
+  padding: 0 24px;
 }
 
 .page-header {
@@ -415,6 +416,7 @@ function formatDate(dateStr: string): string {
 }
 
 .user-table td {
+  text-align: center;
   padding: 12px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-secondary);
