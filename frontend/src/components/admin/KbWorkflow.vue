@@ -23,6 +23,7 @@ const isStarting = ref(false)
 const error = ref('')
 
 const workflows = ref<WorkflowTask[]>([])
+const hasRunning = ref(false)
 const activeTaskId = ref<string | null>(null)
 const activeTask = ref<WorkflowTask | null>(null)
 const logs = ref<WorkflowLogEntry[]>([])
@@ -97,7 +98,9 @@ const progressPercent = () => {
 
 async function loadWorkflows() {
   try {
-    workflows.value = await listWorkflows()
+    const result = await listWorkflows()
+    workflows.value = result.workflows
+    hasRunning.value = result.has_running
   } catch {
     // 静默处理
   }
@@ -214,6 +217,7 @@ async function pollStatus() {
     }
     if (status.status === 'completed' || status.status === 'failed') {
       stopPolling()
+      loadWorkflows()  // 刷新列表和运行状态
     }
   } catch {
     // 静默处理
@@ -342,8 +346,12 @@ onUnmounted(() => {
       <!-- 右侧：主内容区 -->
       <div class="workflow-main">
         <!-- 输入面板 -->
-        <div class="input-panel">
+        <div class="input-panel" :class="{ disabled: hasRunning }">
           <h3 class="panel-title">新建知识库生成任务</h3>
+
+          <div v-if="hasRunning" class="running-notice">
+            当前有工作流正在执行，请等待完成后再创建新任务
+          </div>
 
           <div class="input-type-selector">
             <label
@@ -354,13 +362,14 @@ onUnmounted(() => {
               ]"
               :key="opt.key"
               class="type-option"
-              :class="{ active: inputType === opt.key }"
+              :class="{ active: inputType === opt.key && !hasRunning }"
             >
               <input
                 type="radio"
                 :value="opt.key"
                 v-model="inputType"
                 class="type-radio"
+                :disabled="hasRunning"
               />
               {{ opt.label }}
             </label>
@@ -373,7 +382,7 @@ onUnmounted(() => {
               type="text"
               class="value-input"
               :placeholder="inputType === 'git_url' ? '输入 Git 仓库地址，如 https://github.com/...' : '输入服务器上的目录路径，如 /data/projects/...'"
-              :disabled="isStarting"
+              :disabled="isStarting || hasRunning"
               @keyup.enter="handleStart"
             />
             <div v-else class="file-upload-row">
@@ -382,13 +391,13 @@ onUnmounted(() => {
                 accept=".zip,.tar.gz,.tgz,.gz"
                 class="file-input"
                 @change="handleFileChange"
-                :disabled="isStarting"
+                :disabled="isStarting || hasRunning"
               />
               <span v-if="uploadFile" class="file-name">{{ uploadFile.name }}</span>
             </div>
             <button
               class="btn btn-start"
-              :disabled="isStarting"
+              :disabled="isStarting || hasRunning"
               @click="handleStart"
             >
               {{ isStarting ? '启动中...' : '开始生成' }}
@@ -605,6 +614,27 @@ onUnmounted(() => {
   border: 1px solid var(--border-color);
   border-radius: var(--radius-lg);
   padding: 20px;
+}
+
+.input-panel.disabled {
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.running-notice {
+  padding: 8px 14px;
+  margin-bottom: 12px;
+  background: #fef3c7;
+  color: #92400e;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  border: 1px solid #fcd34d;
+}
+
+[data-theme="dark"] .running-notice {
+  background: #78350f;
+  color: #fde68a;
+  border-color: #a16207;
 }
 
 .panel-title {

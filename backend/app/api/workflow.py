@@ -104,7 +104,11 @@ async def list_workflows(
 ):
     """列出所有工作流"""
     engine = get_engine()
-    return await engine.list_all()
+    workflows = await engine.list_all()
+    return {
+        "workflows": workflows,
+        "has_running": engine.is_running(),
+    }
 
 
 # ============================================================

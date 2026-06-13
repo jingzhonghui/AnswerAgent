@@ -186,3 +186,60 @@ def cleanup_work_dir(task_id: str) -> None:
     if work_dir.exists():
         shutil.rmtree(work_dir)
         logger.info(f"工作目录已清理: {work_dir}")
+
+
+# 拷贝源码时忽略的目录和扩展名（与 analyzer 保持一致）
+_COPY_IGNORE_DIRS = {
+    ".git", "node_modules", "__pycache__", ".venv", "venv",
+    ".idea", ".vscode", "dist", "build", ".next", ".nuxt",
+    "target", "vendor", ".cache", ".tox", ".eggs",
+}
+_COPY_IGNORE_EXTS = {
+    ".pyc", ".pyo", ".so", ".dll", ".exe", ".bin",
+    ".jpg", ".jpeg", ".png", ".gif", ".ico", ".svg",
+    ".mp3", ".mp4", ".avi", ".mov", ".wav",
+    ".zip", ".tar", ".gz", ".7z", ".rar",
+    ".ttf", ".woff", ".woff2", ".eot",
+    ".lock", ".log",
+}
+_COPY_MAX_FILE_SIZE = 10 * 1024 * 1024  # 单个文件最大 10MB
+
+
+def copy_source_to_knowledge(source_dir: Path, knowledge_name: str) -> int:
+    """将源码目录拷贝到知识库的 src/ 子目录下
+
+    Returns:
+        int: 拷贝的文件数
+    """
+    backend_root = Path(__file__).parent.parent.parent
+    dest_dir = backend_root / "knowledge" / knowledge_name / "src"
+    if dest_dir.exists():
+        shutil.rmtree(dest_dir)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    for entry in source_dir.rglob("*"):
+        if not entry.is_file():
+            continue
+
+        # 检查忽略目录
+        parts = set(entry.relative_to(source_dir).parts)
+        if parts & _COPY_IGNORE_DIRS:
+            continue
+
+        # 检查忽略扩展名
+        if entry.suffix.lower() in _COPY_IGNORE_EXTS:
+            continue
+
+        # 检查文件大小
+        if entry.stat().st_size > _COPY_MAX_FILE_SIZE:
+            continue
+
+        rel_path = entry.relative_to(source_dir)
+        target = dest_dir / rel_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(entry, target)
+        count += 1
+
+    logger.info(f"源码已拷贝到 {dest_dir}，共 {count} 个文件")
+    return count

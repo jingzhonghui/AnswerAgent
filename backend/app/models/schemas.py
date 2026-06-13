@@ -238,6 +238,7 @@ class WorkflowTaskResponse(BaseModel):
     input_type: str = Field(..., description="输入类型")
     input_value: str = Field(..., description="输入值")
     knowledge_name: Optional[str] = Field(None, description="知识库名称")
+    repo_type: Optional[str] = Field(None, description="仓库类型: code/doc")
     stage: str = Field(default="init", description="当前阶段")
     stage_progress: dict = Field(default_factory=dict, description="阶段内进度")
     task_list: List[AnalysisTask] = Field(default_factory=list, description="分析任务表")

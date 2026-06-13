@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional
 
 from core.database import get_db
-from core.workflow_preprocess import preprocess, cleanup_work_dir
+from core.workflow_preprocess import preprocess, cleanup_work_dir, copy_source_to_knowledge
 from core.workflow_analyzer import scan_files, generate_task_list
 from core.workflow_executor import execute_tasks, generate_index_file
 from models.schemas import AnalysisTask, WorkflowTaskResponse
@@ -46,7 +46,7 @@ class WorkflowEngine:
         self._running_id: Optional[str] = None
         self._paused = False
         self._cancelled = False
-        self._log_buffers: Dict[str, list] = {}  # task_id -> [(timestamp, line)]
+        self._log_buffers: Dict[str, list] = {}  # task_id -> [{"timestamp": ..., "message": ...}]
 
     # ============================================================
     # 公开 API
@@ -182,6 +182,7 @@ class WorkflowEngine:
             input_type=row["input_type"],
             input_value=row["input_value"],
             knowledge_name=row.get("knowledge_name"),
+            repo_type=row.get("repo_type"),
             stage=row.get("stage", "init"),
             stage_progress=stage_progress,
             task_list=task_list,
@@ -197,33 +198,76 @@ class WorkflowEngine:
         async with get_db() as db:
             cursor = await db.execute(
                 "SELECT id, status, input_type, input_value, knowledge_name, "
-                "stage, result_path, error, created_at, updated_at "
+                "repo_type, stage, result_path, error, created_at, updated_at "
                 "FROM kb_workflow_tasks ORDER BY created_at DESC LIMIT 50"
             )
             rows = await cursor.fetchall()
             return [dict(row) for row in rows]
 
+    def is_running(self) -> bool:
+        """检查是否有工作流正在运行"""
+        return (
+            self._running_task is not None
+            and not self._running_task.done()
+            and self._running_id is not None
+        )
+
     def get_logs(self, task_id: str, since: int = 0) -> list:
-        """获取日志条目（since 为起始索引）"""
+        """获取日志条目（since 为起始索引），内存无数据时从文件读取"""
         buffer = self._log_buffers.get(task_id, [])
-        return buffer[since:]
+        if buffer:
+            return buffer[since:]
+
+        # 内存缓冲区为空（服务重启后），从日志文件读取
+        log_path = self._get_log_path(task_id)
+        if not log_path.exists():
+            return []
+        entries = []
+        with open(log_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    entries.append({"timestamp": "", "message": line})
+        return entries[since:]
 
     def get_log_lines(self, task_id: str) -> int:
         """获取日志总行数"""
-        return len(self._log_buffers.get(task_id, []))
+        buffer = self._log_buffers.get(task_id, [])
+        if buffer:
+            return len(buffer)
+        log_path = self._get_log_path(task_id)
+        if not log_path.exists():
+            return 0
+        with open(log_path, "r", encoding="utf-8") as f:
+            return sum(1 for _ in f)
 
     # ============================================================
     # 内部实现
     # ============================================================
 
     def _log(self, task_id: str, message: str) -> None:
-        """记录日志到内存缓冲区"""
+        """记录日志到内存缓冲区和文件"""
         ts = datetime.now(timezone.utc).isoformat()
         entry = {"timestamp": ts, "message": message}
         if task_id not in self._log_buffers:
             self._log_buffers[task_id] = []
         self._log_buffers[task_id].append(entry)
         logger.info(f"[{task_id}] {message}")
+
+        # 同时写入日志文件
+        log_path = self._get_log_path(task_id)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+    def _get_log_path(self, task_id: str) -> Path:
+        """获取工作流日志文件路径"""
+        from core.workflow_preprocess import get_workflow_data_dir
+        return get_workflow_data_dir() / task_id / "workflow.log"
 
     async def _load_task(self, task_id: str) -> Optional[dict]:
         async with get_db() as db:
@@ -245,6 +289,7 @@ class WorkflowEngine:
         result_path: Optional[str] = None,
         knowledge_name: Optional[str] = None,
         work_dir: Optional[str] = None,
+        repo_type: Optional[str] = None,
     ) -> None:
         now = datetime.now(timezone.utc).isoformat()
         async with get_db() as db:
@@ -275,6 +320,9 @@ class WorkflowEngine:
             if work_dir is not None:
                 updates.append("work_dir = ?")
                 params.append(work_dir)
+            if repo_type is not None:
+                updates.append("repo_type = ?")
+                params.append(repo_type)
 
             params.append(task_id)
             await db.execute(
@@ -330,9 +378,10 @@ class WorkflowEngine:
                             source_dir = Path(work_dir_str)
 
                 scan_result = scan_files(source_dir)
-                self._log(task_id, f"文件扫描完成: {scan_result['total_files']} 个文件, {scan_result['total_size_mb']} MB")
+                repo_type = scan_result.get("repo_type", "code")
+                self._log(task_id, f"文件扫描完成: {scan_result['total_files']} 个文件, {scan_result['total_size_mb']} MB, 仓库类型: {repo_type}")
 
-                knowledge_name, tasks = await generate_task_list(source_dir, scan_result)
+                knowledge_name, tasks = await generate_task_list(source_dir, scan_result, repo_type)
                 self._log(task_id, f"LLM 分析完成，知识库名称: {knowledge_name}，任务数: {len(tasks)}")
 
                 for t in tasks:
@@ -342,6 +391,7 @@ class WorkflowEngine:
                     task_id, "analyzing", stage="analyzing",
                     task_list=tasks,
                     knowledge_name=knowledge_name,
+                    repo_type=repo_type,
                 )
                 stage = "executing"
                 stage_progress = {"current_task_index": 0, "total_tasks": len(tasks)}
@@ -382,6 +432,13 @@ class WorkflowEngine:
                 knowledge_path = Path(__file__).parent.parent.parent / "knowledge"
                 output_dir = knowledge_path / knowledge_name
 
+                # 从 DB 读取当前进度（兼容断点续传）
+                raw_sp = row.get("stage_progress", "{}")
+                if isinstance(raw_sp, str):
+                    stage_progress = json.loads(raw_sp)
+                else:
+                    stage_progress = raw_sp
+
                 def save_checkpoint():
                     asyncio.ensure_future(
                         self._update_status(
@@ -394,10 +451,14 @@ class WorkflowEngine:
                 def is_cancelled():
                     return self._cancelled
 
+                row = await self._load_task(task_id)
+                repo_type = row.get("repo_type") or "code"
+
                 result_completed = await execute_tasks(
                     task_list=task_list,
                     source_dir=source_dir,
                     output_dir=output_dir,
+                    repo_type=repo_type,
                     completed_task_ids=completed_tasks,
                     log_callback=lambda msg: self._log(task_id, msg),
                     save_checkpoint=save_checkpoint,
@@ -405,8 +466,12 @@ class WorkflowEngine:
                 )
 
                 # 生成索引
-                generate_index_file(output_dir, task_list)
-                self._log(task_id, f"索引文件已生成")
+                generate_index_file(output_dir, task_list, repo_type)
+                self._log(task_id, "索引文件已生成")
+
+                # 拷贝源码到知识库 src/ 目录
+                src_count = copy_source_to_knowledge(source_dir, knowledge_name)
+                self._log(task_id, f"源码已拷贝到 src/ 目录，共 {src_count} 个文件")
 
                 # 检查是否暂停
                 if self._paused:

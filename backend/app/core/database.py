@@ -60,6 +60,7 @@ async def init_db() -> None:
                 input_type      TEXT NOT NULL,
                 input_value     TEXT NOT NULL,
                 knowledge_name  TEXT,
+                repo_type       TEXT,
                 work_dir        TEXT,
                 stage           TEXT DEFAULT 'init',
                 stage_progress  TEXT DEFAULT '{}',
@@ -77,6 +78,9 @@ async def init_db() -> None:
         # 迁移：为旧版 users 表补充 is_admin 列
         await _migrate_add_is_admin(db)
 
+        # 迁移：为 kb_workflow_tasks 表补充 repo_type 列
+        await _migrate_add_repo_type(db)
+
         # 创建默认管理员账号（如不存在）
         await _create_default_admin(db)
 
@@ -88,6 +92,16 @@ async def _migrate_add_is_admin(db: aiosqlite.Connection) -> None:
     if "is_admin" not in columns:
         logger.info("迁移：为 users 表添加 is_admin 列")
         await db.execute("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0")
+        await db.commit()
+
+
+async def _migrate_add_repo_type(db: aiosqlite.Connection) -> None:
+    """为 kb_workflow_tasks 表添加 repo_type 列（兼容旧数据库）"""
+    cursor = await db.execute("PRAGMA table_info(kb_workflow_tasks)")
+    columns = [row[1] for row in await cursor.fetchall()]
+    if "repo_type" not in columns:
+        logger.info("迁移：为 kb_workflow_tasks 表添加 repo_type 列")
+        await db.execute("ALTER TABLE kb_workflow_tasks ADD COLUMN repo_type TEXT")
         await db.commit()
 
 

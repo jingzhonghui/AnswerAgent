@@ -331,8 +331,8 @@ export async function cancelWorkflow(id: string): Promise<void> {
 }
 
 /** 列出所有工作流 */
-export async function listWorkflows(): Promise<WorkflowTask[]> {
-  const response = await api.get<WorkflowTask[]>('/admin/workflow/list')
+export async function listWorkflows(): Promise<{ workflows: WorkflowTask[]; has_running: boolean }> {
+  const response = await api.get<{ workflows: WorkflowTask[]; has_running: boolean }>('/admin/workflow/list')
   return response.data
 }
 

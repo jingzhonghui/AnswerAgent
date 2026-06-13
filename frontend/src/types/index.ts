@@ -123,6 +123,7 @@ export interface WorkflowTask {
   input_type: InputType
   input_value: string
   knowledge_name: string | null
+  repo_type: string | null
   stage: string
   stage_progress: Record<string, any>
   task_list: AnalysisTask[]
