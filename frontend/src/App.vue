@@ -1,14 +1,19 @@
 <script setup lang="ts">
 import { onMounted } from 'vue'
 import { useAuthStore } from '@/stores/auth'
+import { useChatStore } from '@/stores/chat'
 
 const authStore = useAuthStore()
+const chatStore = useChatStore()
 
 onMounted(() => {
   const savedTheme = localStorage.getItem('theme')
   if (savedTheme === 'dark') {
     document.documentElement.setAttribute('data-theme', 'dark')
   }
+
+  // 拉取公开配置（如深度思考功能是否启用）
+  chatStore.fetchPublicConfig()
 
   // 页面刷新时从 localStorage 恢复用户信息
   if (authStore.token) {

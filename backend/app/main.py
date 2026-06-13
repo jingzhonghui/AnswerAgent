@@ -8,7 +8,7 @@ import uvicorn
 from core.config import settings
 from core.database import init_db
 from core import model_config
-from api import conversations, knowledge_bases, chat, auth, admin, external_chat
+from api import conversations, knowledge_bases, chat, auth, admin, external_chat, public
 
 
 # 配置统一日志
@@ -38,6 +38,7 @@ app.add_middleware(
 )
 
 # 注册路由
+app.include_router(public.router)
 app.include_router(conversations.router)
 app.include_router(knowledge_bases.router)
 app.include_router(chat.router)

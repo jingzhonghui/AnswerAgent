@@ -173,6 +173,19 @@ export async function streamChat(
 }
 
 // ============================================================
+// Public API（无需认证）
+// ============================================================
+
+export interface PublicConfig {
+  deep_model_enabled: boolean
+}
+
+export async function getPublicConfig(): Promise<PublicConfig> {
+  const response = await api.get<PublicConfig>('/public/config')
+  return response.data
+}
+
+// ============================================================
 // Auth API
 // ============================================================
 

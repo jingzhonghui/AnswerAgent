@@ -8,6 +8,7 @@ import {
   deleteConversation as apiDeleteConversation,
   renameConversation as apiRenameConversation,
   streamChat,
+  getPublicConfig,
 } from '@/api'
 
 export const useChatStore = defineStore('chat', () => {
@@ -26,6 +27,19 @@ export const useChatStore = defineStore('chat', () => {
   const matchedKbs = ref<string[]>([])
   const selectedFiles = ref<FileSelection[]>([])
   let abortController: AbortController | null = null
+
+  // 公开配置（控制 UI 显隐）
+  const deepModelEnabled = ref(true)
+
+  // 拉取公开配置（控制 UI 显隐）
+  async function fetchPublicConfig(): Promise<void> {
+    try {
+      const config = await getPublicConfig()
+      deepModelEnabled.value = config.deep_model_enabled
+    } catch {
+      // 失败时保持默认值（true），不阻塞页面
+    }
+  }
 
   // 计算属性
   const hasActiveConversation = () => activeConversationId.value !== null
@@ -319,9 +333,11 @@ export const useChatStore = defineStore('chat', () => {
     matchedKbs,
     selectedFiles,
     thinkingSteps,
+    deepModelEnabled,
     // 计算属性
     hasActiveConversation,
     // 方法
+    fetchPublicConfig,
     loadConversations,
     createConversation,
     restoreSession,

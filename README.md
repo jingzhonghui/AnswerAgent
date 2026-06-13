@@ -198,8 +198,9 @@ AnswerAgent/
 │   │   │   ├── llm_factory.py       # LLM 工厂（OpenAI/Anthropic）
 │   │   │   ├── kb_router.py         # 知识库匹配路由
 │   │   │   ├── file_loader.py       # 两阶段文件选取
-│   │   │   ├── chain_builder.py     # LCEL 问答链
-│   │   │   └── chat_manager.py      # 对话 JSON 持久化
+│   │   │   ├── agent_builder.py      # DeepAgents 构建工厂
+│   │   │   ├── agent_tools.py         # 知识库工具封装
+│   │   │   └── chat_manager.py        # 对话 JSON 持久化
 │   │   ├── models/
 │   │   │   └── schemas.py           # Pydantic 模型
 │   │   └── main.py                  # FastAPI 入口

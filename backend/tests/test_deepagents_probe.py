@@ -489,7 +489,7 @@ class TestMessageFormat:
 
     def test_format_history_compatibility(self):
         """验证现有 format_history 与 DeepAgents 消息格式兼容"""
-        from core.chain_builder import format_history
+        from core.agent_builder import format_history
 
         raw_history = [
             {"role": "user", "content": "什么是 SSE？"},

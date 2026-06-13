@@ -18,30 +18,26 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, AsyncGenerator, Dict, List
+from typing import AsyncGenerator, Dict, List
 
 from fastapi import APIRouter, Request
 from sse_starlette.sse import EventSourceResponse
 
 from core.kb_router import route_knowledge_bases
 from core.file_loader import select_and_load_files, LoadedFile
-from core.chain_builder import (
-    build_kb_chain,
-    build_general_chain,
-    build_deep_chain,
+from core.agent_builder import (
+    build_simple_agent,
+    build_kb_agent,
+    build_deep_agent,
     format_history,
 )
 from core.llm_factory import LLMConfigError
-from langchain_core.callbacks import BaseCallbackHandler
-from langchain_core.agents import AgentAction, AgentFinish
+from langchain_core.messages import HumanMessage
 from models.schemas import ExternalChatRequest
 
 logger = logging.getLogger("app.api.external_chat")
 
 router = APIRouter(prefix="/api/chat", tags=["external-chat"])
-
-SENTINEL = object()
-
 
 def _merge_context(loaded_files: List[LoadedFile]) -> str:
     """将多个知识库的选中文件合并为单个上下文字符串"""
@@ -55,179 +51,125 @@ def _merge_context(loaded_files: List[LoadedFile]) -> str:
 
 
 # ============================================================
-# 深度思考回调处理器（与 chat.py 中相同逻辑）
-# ============================================================
-
-class _DeepThinkingCallback(BaseCallbackHandler):
-    """捕获 Agent 每一步 Thought/Action/Observation 并推入 asyncio.Queue"""
-
-    def __init__(self, queue: asyncio.Queue, loop: asyncio.AbstractEventLoop):
-        super().__init__()
-        self._queue = queue
-        self._loop = loop
-
-    def _push(self, item: dict) -> None:
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
-
-    def _push_sentinel(self) -> None:
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, SENTINEL)
-
-    def on_agent_action(self, action: AgentAction, **kwargs: Any) -> None:
-        self._push({
-            "event": "agent_think",
-            "data": json.dumps(
-                {
-                    "step": "action",
-                    "thought": getattr(action, "log", "") or "",
-                    "tool": action.tool,
-                    "tool_input": str(action.tool_input),
-                },
-                ensure_ascii=False,
-            ),
-        })
-
-    def on_tool_end(self, output: str, **kwargs: Any) -> None:
-        self._push({
-            "event": "agent_observe",
-            "data": json.dumps(
-                {"step": "observation", "result": output},
-                ensure_ascii=False,
-            ),
-        })
-
-    def on_agent_finish(self, finish: AgentFinish, **kwargs: Any) -> None:
-        output = finish.return_values.get("output", "")
-        self._push({
-            "event": "agent_finish",
-            "data": json.dumps({"output": output}, ensure_ascii=False),
-        })
-        self._push_sentinel()
-
-
-# ============================================================
 # 流式生成器
 # ============================================================
 
 async def _stream_default_external(
     request: Request,
-    context: str,
-    message: str,
-    formatted_history: list,
+    agent,
+    messages: list,
 ) -> AsyncGenerator[Dict[str, str], None]:
-    """默认模式流式输出（外部接口版，无持久化）"""
-    if context:
-        chain = build_kb_chain(context, streaming=True)
-    else:
-        chain = build_general_chain(streaming=True)
+    """默认模式流式输出（外部接口版）：DeepAgent + astream_events(v3)"""
+    stream = await agent.astream_events({"messages": messages}, version="v3")
 
-    for chunk in chain.stream({
-        "question": message,
-        "history": formatted_history,
-    }):
+    async for msg in stream.messages:
         if await request.is_disconnected():
             return
-
-        yield {
-            "event": "token",
-            "data": json.dumps({"content": chunk}, ensure_ascii=False),
-        }
+        async for delta in msg.text:
+            if await request.is_disconnected():
+                return
+            yield {
+                "event": "token",
+                "data": json.dumps({"content": delta}, ensure_ascii=False),
+            }
 
 
 async def _stream_deep_external(
     request: Request,
-    context: str,
-    message: str,
-    formatted_history: list,
+    agent,
+    messages: list,
 ) -> AsyncGenerator[Dict[str, str], None]:
-    """深度思考模式流式输出（外部接口版，无持久化）"""
-    chat_history = formatted_history
+    """深度思考模式流式输出（外部接口版）：DeepAgent + astream_events(v3)
 
+    并发消费 stream.messages（文本 + 工具调用决策）和 stream.tool_calls（工具执行结果），
+    通过 asyncio.Queue 合并保证事件时序。
+    """
+    stream = await agent.astream_events({"messages": messages}, version="v3")
     queue: asyncio.Queue = asyncio.Queue()
-    callback = _DeepThinkingCallback(queue, asyncio.get_event_loop())
-    chain = build_deep_chain(context, callbacks=[callback])
 
-    loop = asyncio.get_event_loop()
+    async def collect_messages():
+        """消费 stream.messages：文本 token + 工具调用决策"""
+        async for msg in stream.messages:
+            async for delta in msg.text:
+                await queue.put(("token", delta))
+            finalized = await msg.tool_calls.get()
+            if finalized:
+                for tc in finalized:
+                    await queue.put(("agent_think", tc))
 
-    def _run_agent():
+    async def collect_tool_calls():
+        """消费 stream.tool_calls：工具执行结果"""
+        async for call in stream.tool_calls:
+            await queue.put(("agent_observe", call))
+
+    async def run_collectors():
         try:
-            chain.invoke({
-                "input": message,
-                "chat_history": chat_history,
-            })
+            await asyncio.gather(collect_messages(), collect_tool_calls())
+        except Exception as e:
+            logger.exception("External deep agent stream error")
+            await queue.put(("error", str(e)))
         finally:
-            loop.call_soon_threadsafe(queue.put_nowait, SENTINEL)
+            await queue.put(("stream_done", None))
 
-    task = asyncio.get_event_loop().run_in_executor(None, _run_agent)
+    task = asyncio.create_task(run_collectors())
 
     try:
         while True:
             try:
-                event = await asyncio.wait_for(queue.get(), timeout=1)
+                event_type, data = await asyncio.wait_for(queue.get(), timeout=1.0)
             except asyncio.TimeoutError:
                 if await request.is_disconnected():
                     task.cancel()
                     return
                 continue
 
-            if event is SENTINEL:
-                while not queue.empty():
-                    late_event: dict = queue.get_nowait()
-                    if late_event is SENTINEL:
-                        continue
-                    if late_event["event"] == "agent_finish":
-                        data = json.loads(late_event["data"])
-                        output_text = data.get("output", "")
-                        if output_text:
-                            yield {
-                                "event": "token",
-                                "data": json.dumps({"content": output_text}, ensure_ascii=False),
-                            }
-                    else:
-                        yield late_event
-
-                try:
-                    exc = task.exception()
-                except asyncio.InvalidStateError:
-                    exc = None
-                if exc:
-                    logger.exception("External deep chain invoke failed")
-                    yield {
-                        "event": "error",
-                        "data": json.dumps(
-                            {"message": f"深度思考执行失败: {exc}"},
-                            ensure_ascii=False,
-                        ),
-                    }
+            if event_type == "stream_done":
                 return
-
-            if event["event"] == "agent_finish":
-                data = json.loads(event["data"])
-                output_text = data.get("output", "")
-                if output_text:
-                    yield {
-                        "event": "token",
-                        "data": json.dumps({"content": output_text}, ensure_ascii=False),
-                    }
-                continue
-
-            if event["event"] == "error":
-                yield event
-                continue
-
-            yield event
+            elif event_type == "token":
+                yield {
+                    "event": "token",
+                    "data": json.dumps({"content": data}, ensure_ascii=False),
+                }
+            elif event_type == "agent_think":
+                yield {
+                    "event": "agent_think",
+                    "data": json.dumps(
+                        {
+                            "step": "action",
+                            "thought": "",
+                            "tool": data.get("name", ""),
+                            "tool_input": str(data.get("args", {})),
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            elif event_type == "agent_observe":
+                yield {
+                    "event": "agent_observe",
+                    "data": json.dumps(
+                        {
+                            "step": "observation",
+                            "result": (
+                                data.output
+                                if data.completed and not data.error
+                                else str(data.error)
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
+            elif event_type == "error":
+                yield {
+                    "event": "error",
+                    "data": json.dumps(
+                        {"message": f"深度思考执行失败: {data}"},
+                        ensure_ascii=False,
+                    ),
+                }
 
     except asyncio.CancelledError:
         task.cancel()
         raise
-    except Exception as e:
-        logger.exception("External deep stream error")
-        yield {
-            "event": "error",
-            "data": json.dumps(
-                {"message": f"深度思考执行失败: {e}"},
-                ensure_ascii=False,
-            ),
-        }
 
 
 async def _external_stream_events(
@@ -291,21 +233,25 @@ async def _external_stream_events(
         # --- 3. 构建上下文 ---
         context = _merge_context(all_loaded) if all_loaded else ""
 
-        # --- 4. 格式化历史消息 ---
+        # --- 4. 格式化历史消息 + 构建 Agent ---
         formatted_history = format_history([
             {"role": h.role, "content": h.content}
             for h in body.history
         ])
+        agent_messages = formatted_history + [HumanMessage(content=body.message)]
+
+        if body.mode == "deep":
+            agent = build_deep_agent(streaming=True, reasoning=True)
+        elif context:
+            agent = build_kb_agent(context, streaming=True)
+        else:
+            agent = build_simple_agent(streaming=True)
 
         # --- 5. 流式输出（按 mode 分发） ---
         if body.mode == "deep":
-            gen = _stream_deep_external(
-                request, context, body.message, formatted_history,
-            )
+            gen = _stream_deep_external(request, agent, agent_messages)
         else:
-            gen = _stream_default_external(
-                request, context, body.message, formatted_history,
-            )
+            gen = _stream_default_external(request, agent, agent_messages)
 
         async for event in gen:
             yield event

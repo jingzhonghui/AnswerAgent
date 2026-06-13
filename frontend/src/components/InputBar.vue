@@ -44,6 +44,7 @@ function stopStreaming() {
         <div class="input-toolbar">
           <div class="toolbar-left">
             <button
+              v-if="chatStore.deepModelEnabled"
               class="toolbar-btn"
               :class="{ active: isDeepMode }"
               @click="isDeepMode = !isDeepMode"

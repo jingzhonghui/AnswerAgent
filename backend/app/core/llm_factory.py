@@ -1,7 +1,7 @@
 """LLM 工厂模块
 
 根据运行时模型配置统一创建 LangChain Chat Model，
-供 kb_router、file_loader、chain_builder 共用。
+供 kb_router、file_loader、agent_builder 共用。
 
 支持两种 provider:
 - "openai"   -> ChatOpenAI（也兼容 DeepSeek、通义千问等 OpenAI 兼容 API）

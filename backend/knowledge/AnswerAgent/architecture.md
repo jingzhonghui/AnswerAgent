@@ -13,7 +13,8 @@ backend/app/
 │   ├── llm_factory.py      # 统一创建 LangChain Chat Model
 │   ├── kb_router.py        # 知识库扫描与 LLM 路由
 │   ├── file_loader.py      # 两阶段文件选取
-│   ├── chain_builder.py    # LCEL 问答链（M3）
+│   ├── agent_builder.py      # DeepAgents 构建工厂（M3）
+│   ├── agent_tools.py         # 知识库工具封装（M3）
 │   └── chat_manager.py     # 对话 JSON 持久化
 ├── models/
 │   └── schemas.py          # Pydantic 请求/响应模型
