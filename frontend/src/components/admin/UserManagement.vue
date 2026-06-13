@@ -416,7 +416,7 @@ function formatDate(dateStr: string): string {
 }
 
 .user-table td {
-  text-align: center;
+  text-align: left;
   padding: 12px;
   border-bottom: 1px solid var(--border-color);
   color: var(--text-secondary);

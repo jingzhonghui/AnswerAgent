@@ -8,6 +8,8 @@ services:
       - /var/answeragent/knowledge:/app/knowledge
       - /var/answeragent/data:/app/data
       - /var/answeragent/env:/app/.env
+      # 可选：挂载自定义 skills 目录（内置 skills 会自动同步到该目录）
+      # - /var/answeragent/skills:/app/skills
     restart: unless-stopped
 
   frontend:
