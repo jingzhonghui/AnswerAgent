@@ -315,7 +315,7 @@ async function renderFullscreenMermaid(): Promise<void> {
     // 只移除根 <svg> 的固定宽高，让 CSS 按全屏容器自适应缩放；
     // 不能全局删除 width/height，否则会破坏 Mermaid 内部 rect/label 布局。
     let fixedSvg = svg.replace(/viewBox="NaN[^"]*"/g, 'viewBox="0 0 800 400"')
-    fixedSvg = fixedSvg.replace(/<svg\b([^>]*)>/, (svgTag) =>
+    fixedSvg = fixedSvg.replace(/<svg\b([^>]*)>/, (svgTag: string) =>
       svgTag.replace(/\s(width|height)="[^"]*"/g, '')
     )
     // 渲染到 zoom wrapper 内

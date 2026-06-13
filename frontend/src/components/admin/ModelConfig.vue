@@ -12,9 +12,6 @@ const messageType = ref<'success' | 'error'>('success')
 // 敏感字段（API Key）显示为密码框
 const sensitiveKeys = new Set(['api_key', 'deep_api_key'])
 
-// 需要重启才能生效的配置项
-const restartRequiredKeys = new Set(['knowledge_path', 'data_path'])
-
 // 系统配置键（非 LLM 配置）
 const systemConfigKeys = new Set(['history_window', 'knowledge_path', 'data_path', 'jwt_algorithm', 'jwt_expire_minutes'])
 
