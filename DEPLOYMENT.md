@@ -310,36 +310,29 @@ sudo systemctl reload nginx
 `backend/Dockerfile`：
 
 ```dockerfile
-# ---- Build stage ----
-FROM python:3.11-slim AS builder
-
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# ---- Runtime stage ----
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# 从构建阶段复制依赖
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制代码
-COPY app/ app/
+COPY app/ ./app/
+COPY skills/ ./skills_builtin/
 
-# 运行时目录（由 volume 挂载或入口脚本创建）
-RUN mkdir -p /app/data /app/knowledge
+COPY docker-entrypoint.sh /
+RUN chmod +x /docker-entrypoint.sh
+
+ENV PYTHONPATH=/app/app
+WORKDIR /app/app
 
 EXPOSE 8765
 
-# 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8765/api/health')" || exit 1
-
-CMD ["python", "-m", "app.main"]
+ENTRYPOINT ["/docker-entrypoint.sh"]
+CMD ["python", "-m", "main"]
 ```
+
+> **Skills 内置机制**：`skills/` 目录以 `skills_builtin` 名称打包进镜像。容器启动时 `docker-entrypoint.sh` 会将内置 skills 同步到 `/app/skills/`（跳过已存在的 skill），用户可通过 volume 挂载自定义 skills 目录覆盖。
 
 ### 2. 前端 Dockerfile
 
@@ -412,53 +405,39 @@ server {
 `docker-compose.yml`（项目根目录）：
 
 ```yaml
-version: "3.8"
-
 services:
   backend:
     build:
       context: ./backend
-      dockerfile: Dockerfile
-    container_name: answeragent-backend
-    restart: unless-stopped
     ports:
-      - "127.0.0.1:8765:8765"
-    env_file:
-      - ./backend/.env
+      - "8765:8765"
     volumes:
-      # 数据持久化（SQLite + 对话 JSON）
-      - answeragent-data:/app/data
-      # 知识库挂载（只读）
-      - ./backend/knowledge:/app/knowledge:ro
-    environment:
-      - KNOWLEDGE_PATH=/app/knowledge
-      - DATA_PATH=/app/data/conversations
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; exit(0 if urllib.request.urlopen('http://localhost:8765/api/health').status == 200 else 1)"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
+      - /var/answeragent/knowledge:/app/knowledge
+      - /var/answeragent/data:/app/data
+      - /var/answeragent/env:/app/.env
+      # 可选：挂载自定义 skills 目录（内置 skills 会自动同步）
+      # - /var/answeragent/skills:/app/skills
+    restart: unless-stopped
 
   frontend:
     build:
       context: ./frontend
-      dockerfile: Dockerfile
-    container_name: answeragent-frontend
-    restart: unless-stopped
     ports:
-      - "80:80"
+      - "5577:80"
     depends_on:
       - backend
-
-volumes:
-  answeragent-data:
-    driver: local
+    restart: unless-stopped
 ```
+
+> **持久化说明**：
+> - `/app/data` — SQLite 数据库 + 对话 JSON 文件，**必须持久化**
+> - `/app/knowledge` — 知识库文档，建议持久化
+> - `/app/.env` — 环境变量配置文件
+> - `/app/skills` — 可选，自定义 skills 目录（不挂载时自动使用内置 skills）
 
 ### 5. 配置 CORS（容器部署）
 
-容器部署时前后端同域（均由 Nginx 提供），无需修改 CORS 配置。但如果需要将后端独立暴露，修改 `backend/app/core/config.py` 或通过环境变量注入允许的来源。
+容器部署时前后端同域（均由 Nginx 提供），无需修改 CORS 配置。如果需要将后端独立暴露，修改 `backend/app/main.py` 中的 `allow_origins` 配置。
 
 ### 6. 构建与启动
 
@@ -559,9 +538,10 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 | 路径 | 内容 | 持久化要求 |
 |------|------|-----------|
-| `backend/data/answeragent.db` | 用户账户 + 对话元数据（SQLite） | **必须持久化** |
+| `backend/data/answeragent.db` | 用户账户 + 对话元数据 + 运行时配置（SQLite） | **必须持久化** |
 | `backend/data/conversations/*.json` | 对话消息内容 | **必须持久化** |
-| `backend/knowledge/` | 知识库文档 | 建议只读挂载 |
+| `backend/knowledge/` | 知识库文档 | 建议持久化 |
+| `backend/skills/` | 自定义 Skills（可选） | 按需挂载 |
 
 ---
 

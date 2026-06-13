@@ -12,6 +12,10 @@
 - [4. 聊天（SSE 流式）](#4-聊天sse-流式)
 - [5. 知识库](#5-知识库)
 - [6. 管理后台](#6-管理后台)
+  - [6.1 模型配置](#61-模型配置)
+  - [6.2 用户管理](#62-用户管理)
+  - [6.3 会话管理](#63-会话管理)
+  - [6.4 知识库生成工作流](#64-知识库生成工作流)
 - [7. 通用](#7-通用)
 - [8. 数据模型](#8-数据模型)
 
@@ -631,6 +635,165 @@ DELETE /api/admin/conversations/{conversation_id}
 管理员不受对话所有权限制。
 
 **响应（204）：** 无响应体
+
+### 6.4 知识库生成工作流
+
+#### 启动工作流（路径/Git）
+
+```
+POST /api/admin/workflow/start
+```
+
+**请求体：**
+
+```json
+{
+  "input_type": "local_path",
+  "input_value": "/path/to/repo"
+}
+```
+
+`input_type` 可选值：`local_path`、`git_url`、`archive`
+
+**响应（200）：**
+
+```json
+{
+  "task_id": "uuid",
+  "status": "processing"
+}
+```
+
+> 409：已有工作流在运行。
+
+#### 上传压缩包启动工作流
+
+```
+POST /api/admin/workflow/start/upload
+```
+
+**请求：** `multipart/form-data`，字段 `file`（.zip / .tar.gz / .tgz，最大 500MB）
+
+**响应（200）：** 同 `/start`
+
+#### 获取工作流状态
+
+```
+GET /api/admin/workflow/status/{task_id}
+```
+
+**响应（200）：**
+
+```json
+{
+  "id": "uuid",
+  "status": "executing",
+  "input_type": "git_url",
+  "input_value": "https://github.com/...",
+  "knowledge_name": "my-project",
+  "repo_type": "code",
+  "stage": "executing",
+  "stage_progress": {"current_task_index": 2, "total_tasks": 5},
+  "task_list": [
+    {
+      "id": "t1",
+      "description": "生成项目概述",
+      "target_file": "overview.md",
+      "dependencies": []
+    }
+  ],
+  "completed_tasks": ["t1"],
+  "result_path": "/app/knowledge/my-project",
+  "error": null,
+  "created_at": "2024-01-01T00:00:00",
+  "updated_at": "2024-01-01T00:00:00"
+}
+```
+
+`status` 可选值：`pending`、`preprocessing`、`analyzing`、`executing`、`completed`、`failed`、`paused`
+`repo_type` 可选值：`code`（代码仓库）、`doc`（文档仓库）
+
+#### 列出所有工作流
+
+```
+GET /api/admin/workflow/list
+```
+
+**响应（200）：**
+
+```json
+{
+  "workflows": [
+    {
+      "id": "uuid",
+      "status": "completed",
+      "input_type": "git_url",
+      "input_value": "https://github.com/...",
+      "knowledge_name": "my-project",
+      "repo_type": "code",
+      "stage": "completed",
+      "result_path": "/app/knowledge/my-project",
+      "error": null,
+      "created_at": "2024-01-01T00:00:00",
+      "updated_at": "2024-01-01T00:00:00"
+    }
+  ],
+  "has_running": false
+}
+```
+
+#### 暂停工作流
+
+```
+POST /api/admin/workflow/pause/{task_id}
+```
+
+**响应（200）：**
+
+```json
+{"message": "暂停请求已发送"}
+```
+
+#### 恢复工作流
+
+```
+POST /api/admin/workflow/resume/{task_id}
+```
+
+**响应（200）：**
+
+```json
+{"task_id": "uuid", "status": "processing"}
+```
+
+#### 删除工作流
+
+```
+DELETE /api/admin/workflow/{task_id}
+```
+
+> 运行中的工作流会先取消再删除。删除会清理工作目录和日志。
+
+**响应（204）：** 无响应体
+
+#### 工作流日志 SSE
+
+```
+GET /api/admin/workflow/log/{task_id}
+```
+
+**响应：** `text/event-stream`（SSE）
+
+```
+event: log
+data: {"type":"log","timestamp":"2024-01-01T00:00:00","message":"=== 预处理阶段 ==="}
+
+event: log
+data: {"type":"log","timestamp":"2024-01-01T00:00:01","message":"预处理完成"}
+
+event: done
+data: {"type":"done","status":"completed"}
+```
 
 ---
 
