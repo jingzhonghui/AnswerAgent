@@ -38,6 +38,7 @@ from core.agent_builder import (
     format_history,
 )
 from core.llm_factory import LLMConfigError, create_chat_llm
+from core.skill_loader import load_skill_files
 from langchain_core.messages import HumanMessage
 from models.schemas import ChatStreamRequest
 
@@ -71,6 +72,15 @@ def _merge_context(loaded_files: List[LoadedFile]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_agent_input(messages: list) -> dict:
+    """构建 DeepAgent 输入，自动注入本地 Skills 虚拟文件。"""
+    payload = {"messages": messages}
+    skill_files = load_skill_files()
+    if skill_files:
+        payload["files"] = skill_files
+    return payload
+
+
 async def _stream_default(
     request: Request,
     agent,
@@ -80,7 +90,7 @@ async def _stream_default(
 
     agent 是 build_simple_agent() 或 build_kb_agent(context) 返回的 CompiledStateGraph。
     """
-    stream = await agent.astream_events({"messages": messages}, version="v3")
+    stream = await agent.astream_events(_build_agent_input(messages), version="v3")
 
     async for msg in stream.messages:
         if await request.is_disconnected():
@@ -106,7 +116,7 @@ async def _stream_deep(
 
     agent 是 build_deep_agent() 返回的 CompiledStateGraph。
     """
-    stream = await agent.astream_events({"messages": messages}, version="v3")
+    stream = await agent.astream_events(_build_agent_input(messages), version="v3")
     queue: asyncio.Queue = asyncio.Queue()
 
     async def collect_messages():

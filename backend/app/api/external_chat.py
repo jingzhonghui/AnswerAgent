@@ -32,6 +32,7 @@ from core.agent_builder import (
     format_history,
 )
 from core.llm_factory import LLMConfigError
+from core.skill_loader import load_skill_files
 from langchain_core.messages import HumanMessage
 from models.schemas import ExternalChatRequest
 
@@ -50,6 +51,15 @@ def _merge_context(loaded_files: List[LoadedFile]) -> str:
     return "\n\n".join(parts)
 
 
+def _build_agent_input(messages: list) -> dict:
+    """构建 DeepAgent 输入，自动注入本地 Skills 虚拟文件。"""
+    payload = {"messages": messages}
+    skill_files = load_skill_files()
+    if skill_files:
+        payload["files"] = skill_files
+    return payload
+
+
 # ============================================================
 # 流式生成器
 # ============================================================
@@ -60,7 +70,7 @@ async def _stream_default_external(
     messages: list,
 ) -> AsyncGenerator[Dict[str, str], None]:
     """默认模式流式输出（外部接口版）：DeepAgent + astream_events(v3)"""
-    stream = await agent.astream_events({"messages": messages}, version="v3")
+    stream = await agent.astream_events(_build_agent_input(messages), version="v3")
 
     async for msg in stream.messages:
         if await request.is_disconnected():
@@ -84,7 +94,7 @@ async def _stream_deep_external(
     并发消费 stream.messages（文本 + 工具调用决策）和 stream.tool_calls（工具执行结果），
     通过 asyncio.Queue 合并保证事件时序。
     """
-    stream = await agent.astream_events({"messages": messages}, version="v3")
+    stream = await agent.astream_events(_build_agent_input(messages), version="v3")
     queue: asyncio.Queue = asyncio.Queue()
 
     async def collect_messages():

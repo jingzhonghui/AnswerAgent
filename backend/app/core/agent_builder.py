@@ -21,11 +21,25 @@ from core.agent_tools import (
     build_knowledge_search_tool,
     create_all_kb_tools,
 )
+from core.skill_loader import get_skill_sources
 
 
 # ============================================================
 # System Prompts（从 chain_builder.py 迁入）
 # ============================================================
+
+ASSISTANT_IDENTITY_PROMPT = """\
+## 身份设定
+你是 AnswerAgent，一个基于本地知识库和大语言模型的问答助手。
+当用户询问“你是谁”“你的身份”“你是什么助手”时，优先以 AnswerAgent 的产品身份回答。
+不要主动声称自己是 Claude、ChatGPT、OpenAI、Anthropic 或其他底层模型。
+如果用户明确询问底层模型或模型提供商，可以说明：我的回答能力由后端配置的大语言模型提供支持。"""
+
+
+def _with_identity(system_prompt: str) -> str:
+    """为系统提示词追加统一产品身份。"""
+    return f"{ASSISTANT_IDENTITY_PROMPT}\n\n{system_prompt}"
+
 
 KB_SYSTEM_TEMPLATE = """\
 你是一个基于本地知识库的问答助手。请根据以下参考文件内容回答用户问题。
@@ -134,9 +148,10 @@ def build_simple_agent(
 
     agent = create_deep_agent(
         model=llm,
-        system_prompt=GENERAL_SYSTEM_TEMPLATE,
+        system_prompt=_with_identity(GENERAL_SYSTEM_TEMPLATE),
         tools=[],
         middleware=[],
+        skills=get_skill_sources(),
     )
     return agent
 
@@ -161,13 +176,14 @@ def build_kb_agent(
         DeepAgent: 可调用 agent.ainvoke({"messages": [...]})
     """
     llm = model or create_chat_llm(streaming=streaming, temperature=0.3)
-    system_prompt = KB_SYSTEM_TEMPLATE.format(context=context)
+    system_prompt = _with_identity(KB_SYSTEM_TEMPLATE.format(context=context))
 
     agent = create_deep_agent(
         model=llm,
         system_prompt=system_prompt,
         tools=[],
         middleware=[],
+        skills=get_skill_sources(),
     )
     return agent
 
@@ -201,9 +217,10 @@ def build_deep_agent(
 
     agent = create_deep_agent(
         model=llm,
-        system_prompt=DEEP_SYSTEM_PROMPT,
+        system_prompt=_with_identity(DEEP_SYSTEM_PROMPT),
         tools=tools,
         middleware=[],
+        skills=get_skill_sources(),
     )
     return agent
 
@@ -234,14 +251,17 @@ def build_deep_agent_legacy(
     llm = model or create_chat_llm(streaming=streaming, reasoning=reasoning)
     kb_tool = build_knowledge_search_tool(context)
 
+    system_prompt = DEEP_SYSTEM_PROMPT.replace(
+        "首先使用 list_knowledge_bases 工具查看有哪些可用的知识库",
+        "使用 knowledge_search 工具查找相关文件内容"
+    )
+
     agent = create_deep_agent(
         model=llm,
-        system_prompt=DEEP_SYSTEM_PROMPT.replace(
-            "首先使用 list_knowledge_bases 工具查看有哪些可用的知识库",
-            "使用 knowledge_search 工具查找相关文件内容"
-        ),
+        system_prompt=_with_identity(system_prompt),
         tools=[kb_tool],
         middleware=[],
+        skills=get_skill_sources(),
     )
     return agent
 
