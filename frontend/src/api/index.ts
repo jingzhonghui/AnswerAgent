@@ -8,6 +8,10 @@ import type {
   ModelConfigItem,
   AdminUserInfo,
   AdminConversationSummary,
+  WorkflowTask,
+  StartWorkflowRequest,
+  StartWorkflowResponse,
+  WorkflowLogEntry,
 } from '@/types'
 
 // axios 实例配置
@@ -281,6 +285,97 @@ export async function getAdminConversation(id: string): Promise<Conversation> {
 // 删除任意对话
 export async function deleteAdminConversation(id: string): Promise<void> {
   await api.delete(`/admin/conversations/${id}`)
+}
+
+// ============================================================
+// 知识库生成工作流 API
+// ============================================================
+
+/** 启动工作流（路径/Git 方式） */
+export async function startWorkflow(data: StartWorkflowRequest): Promise<StartWorkflowResponse> {
+  const response = await api.post<StartWorkflowResponse>('/admin/workflow/start', data)
+  return response.data
+}
+
+/** 上传压缩包启动工作流 */
+export async function startWorkflowUpload(file: File): Promise<StartWorkflowResponse> {
+  const formData = new FormData()
+  formData.append('file', file)
+  const response = await api.post<StartWorkflowResponse>('/admin/workflow/start/upload', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 60000,
+  })
+  return response.data
+}
+
+/** 获取工作流状态 */
+export async function getWorkflowStatus(id: string): Promise<WorkflowTask> {
+  const response = await api.get<WorkflowTask>(`/admin/workflow/status/${id}`)
+  return response.data
+}
+
+/** 暂停工作流 */
+export async function pauseWorkflow(id: string): Promise<void> {
+  await api.post(`/admin/workflow/pause/${id}`)
+}
+
+/** 恢复工作流 */
+export async function resumeWorkflow(id: string): Promise<{ task_id: string; status: string }> {
+  const response = await api.post<{ task_id: string; status: string }>(`/admin/workflow/resume/${id}`)
+  return response.data
+}
+
+/** 取消工作流 */
+export async function cancelWorkflow(id: string): Promise<void> {
+  await api.delete(`/admin/workflow/${id}`)
+}
+
+/** 列出所有工作流 */
+export async function listWorkflows(): Promise<WorkflowTask[]> {
+  const response = await api.get<WorkflowTask[]>('/admin/workflow/list')
+  return response.data
+}
+
+/** SSE 流式日志 */
+export interface WorkflowLogHandlers {
+  onLog: (entry: WorkflowLogEntry) => void
+  onDone: (status: string) => void
+  onError: (message: string) => void
+}
+
+export async function streamWorkflowLog(
+  taskId: string,
+  handlers: WorkflowLogHandlers,
+  signal: AbortSignal,
+): Promise<void> {
+  const token = localStorage.getItem('access_token')
+  await fetchEventSource(`/api/admin/workflow/log/${taskId}`, {
+    method: 'GET',
+    headers: {
+      'Authorization': `Bearer ${token || ''}`,
+    },
+    signal,
+    onmessage(event) {
+      if (!event.data) return
+      try {
+        const data = JSON.parse(event.data)
+        if (event.event === 'log') {
+          handlers.onLog({ timestamp: data.timestamp, message: data.message })
+        } else if (event.event === 'done') {
+          handlers.onDone(data.status || 'completed')
+        }
+      } catch {
+        // 忽略解析失败
+      }
+    },
+    onerror(err) {
+      if (signal.aborted) {
+        throw err
+      }
+      handlers.onError('日志连接失败')
+      throw err
+    },
+  })
 }
 
 export default api

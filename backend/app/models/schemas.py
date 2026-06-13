@@ -211,3 +211,44 @@ class AdminConversationSummary(BaseModel):
     message_count: int = Field(default=0, description="消息数量")
     created_at: datetime = Field(..., description="创建时间")
     updated_at: datetime = Field(..., description="更新时间")
+
+
+# ============================================================
+# 知识库生成工作流模型
+# ============================================================
+
+class AnalysisTask(BaseModel):
+    """分析阶段生成的知识库文件任务"""
+    id: str = Field(..., description="任务 ID")
+    description: str = Field(..., description="任务描述（该文件涵盖什么内容）")
+    target_file: str = Field(..., description="目标文件名（相对路径）")
+    dependencies: List[str] = Field(default_factory=list, description="依赖的任务 ID 列表")
+
+
+class WorkflowStartRequest(BaseModel):
+    """启动知识库生成工作流请求"""
+    input_type: str = Field(..., pattern="^(local_path|git_url|archive)$", description="输入类型")
+    input_value: str = Field(..., min_length=1, description="输入值（路径/URL）")
+
+
+class WorkflowTaskResponse(BaseModel):
+    """工作流任务状态响应"""
+    id: str = Field(..., description="任务 ID")
+    status: str = Field(..., description="状态: pending/preprocessing/analyzing/executing/completed/failed/paused")
+    input_type: str = Field(..., description="输入类型")
+    input_value: str = Field(..., description="输入值")
+    knowledge_name: Optional[str] = Field(None, description="知识库名称")
+    stage: str = Field(default="init", description="当前阶段")
+    stage_progress: dict = Field(default_factory=dict, description="阶段内进度")
+    task_list: List[AnalysisTask] = Field(default_factory=list, description="分析任务表")
+    completed_tasks: List[str] = Field(default_factory=list, description="已完成任务 ID 列表")
+    result_path: Optional[str] = Field(None, description="生成的知识库路径")
+    error: Optional[str] = Field(None, description="错误信息")
+    created_at: str = Field(..., description="创建时间")
+    updated_at: str = Field(..., description="更新时间")
+
+
+class WorkflowStartResponse(BaseModel):
+    """启动工作流响应"""
+    task_id: str = Field(..., description="任务 ID")
+    status: str = Field(..., description="初始状态")

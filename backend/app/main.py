@@ -8,7 +8,7 @@ import uvicorn
 from core.config import settings
 from core.database import init_db
 from core import model_config
-from api import conversations, knowledge_bases, chat, auth, admin, external_chat, public
+from api import conversations, knowledge_bases, chat, auth, admin, external_chat, public, workflow
 
 
 # 配置统一日志
@@ -45,6 +45,7 @@ app.include_router(chat.router)
 app.include_router(external_chat.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
+app.include_router(workflow.router)
 
 
 @app.on_event("startup")

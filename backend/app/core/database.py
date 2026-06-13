@@ -53,6 +53,25 @@ async def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_conversations_updated_at
             ON conversations(updated_at)
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS kb_workflow_tasks (
+                id              TEXT PRIMARY KEY,
+                status          TEXT NOT NULL DEFAULT 'pending',
+                input_type      TEXT NOT NULL,
+                input_value     TEXT NOT NULL,
+                knowledge_name  TEXT,
+                work_dir        TEXT,
+                stage           TEXT DEFAULT 'init',
+                stage_progress  TEXT DEFAULT '{}',
+                task_list       TEXT DEFAULT '[]',
+                completed_tasks TEXT DEFAULT '[]',
+                result_path     TEXT,
+                error           TEXT,
+                log_file        TEXT,
+                created_at      TEXT NOT NULL,
+                updated_at      TEXT NOT NULL
+            )
+        """)
         await db.commit()
 
         # 迁移：为旧版 users 表补充 is_admin 列

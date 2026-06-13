@@ -6,17 +6,19 @@ import { apiChangePassword } from '@/api'
 import ModelConfig from '@/components/admin/ModelConfig.vue'
 import UserManagement from '@/components/admin/UserManagement.vue'
 import ConversationManagement from '@/components/admin/ConversationManagement.vue'
+import KbWorkflow from '@/components/admin/KbWorkflow.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
-type TabKey = 'model' | 'users' | 'conversations'
+type TabKey = 'model' | 'users' | 'conversations' | 'workflow'
 const activeTab = ref<TabKey>('model')
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: 'model', label: '模型配置', icon: '⚙️' },
   { key: 'users', label: '用户管理', icon: '👥' },
   { key: 'conversations', label: '会话管理', icon: '💬' },
+  { key: 'workflow', label: '知识库生成', icon: '📚' },
 ]
 
 // 修改密码弹窗
@@ -126,6 +128,7 @@ async function handleChangePassword() {
       <ModelConfig v-if="activeTab === 'model'" />
       <UserManagement v-else-if="activeTab === 'users'" />
       <ConversationManagement v-else-if="activeTab === 'conversations'" />
+      <KbWorkflow v-else-if="activeTab === 'workflow'" />
     </main>
   </div>
 

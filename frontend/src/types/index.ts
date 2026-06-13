@@ -101,3 +101,49 @@ export interface AdminConversationSummary {
   created_at: string
   updated_at: string
 }
+
+// ============================================================
+// 知识库生成工作流类型
+// ============================================================
+
+export type InputType = 'local_path' | 'git_url' | 'archive'
+
+export type WorkflowStatus = 'pending' | 'preprocessing' | 'analyzing' | 'executing' | 'completed' | 'failed' | 'paused'
+
+export interface AnalysisTask {
+  id: string
+  description: string
+  target_file: string
+  dependencies: string[]
+}
+
+export interface WorkflowTask {
+  id: string
+  status: WorkflowStatus
+  input_type: InputType
+  input_value: string
+  knowledge_name: string | null
+  stage: string
+  stage_progress: Record<string, any>
+  task_list: AnalysisTask[]
+  completed_tasks: string[]
+  result_path: string | null
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StartWorkflowRequest {
+  input_type: InputType
+  input_value: string
+}
+
+export interface StartWorkflowResponse {
+  task_id: string
+  status: string
+}
+
+export interface WorkflowLogEntry {
+  timestamp: string
+  message: string
+}
