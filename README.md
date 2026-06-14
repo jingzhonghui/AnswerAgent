@@ -49,11 +49,7 @@ cd backend
 # 安装依赖
 pip install -r requirements.txt
 
-# 配置环境变量
-cp .env.example .env
-# 编辑 .env，填入你的 API key
-
-# 启动服务
+# 启动服务（首次启动后通过管理后台 /admin 配置 LLM API key）
 python -m app.main
 ```
 
@@ -76,16 +72,13 @@ npm run dev
 ### 3. 首次使用
 
 1. 打开 `http://localhost:5173`，注册一个账号
-2. 默认管理员账号：`admin` / `admin123`（可在 `.env` 中配置 `ADMIN_DEFAULT_PASSWORD`）
+2. 默认管理员账号：`admin` / `admin123`
 3. 管理员登录后访问 `/admin` 进入管理后台，配置 LLM API key
 4. 返回聊天页面，新建对话开始提问
 
 ### 4. Docker 部署
 
 ```bash
-# 准备环境文件
-echo "API_KEY=sk-your-key" > backend/.env
-
 # 构建并启动
 docker compose build
 docker compose up -d
@@ -98,40 +91,19 @@ curl http://localhost:8765/api/health
 
 ## 配置说明
 
-后端配置通过 `backend/.env` 文件设置初始值，运行时可通过管理后台热更新（无需重启）：
+所有配置通过管理后台（`/admin` → 模型配置）管理，存储在 SQLite 数据库 `model_config` 表中，支持热更新（`knowledge_path`、`data_path`、`jwt_*` 等需重启生效）。
 
-```ini
-# LLM 提供商
-LLM_PROVIDER=openai
-API_KEY=sk-xxx
-BASE_URL=https://api.deepseek.com/v1
-MODEL=deepseek-v4-flash
+首次启动后请登录管理后台配置以下必需项：
 
-# 路径配置
-KNOWLEDGE_PATH=./knowledge
-DATA_PATH=./data/conversations
+| 配置项 | 说明 |
+|--------|------|
+| `llm_provider` | LLM 提供商：`openai` 或 `anthropic` |
+| `api_key` | API 密钥 |
+| `base_url` | API 地址（OpenAI 兼容 API 如 DeepSeek 需填写） |
+| `model` | 模型名称，默认 `gpt-4o` |
+| `deep_model_enabled` | 是否启用深度思考模式 |
 
-# 对话历史保留轮数
-HISTORY_WINDOW=10
-
-# JWT 配置
-JWT_SECRET_KEY=<随机字符串>
-JWT_ALGORITHM=HS256
-JWT_EXPIRE_MINUTES=1440
-
-# 管理员默认密码
-ADMIN_DEFAULT_PASSWORD=admin123
-
-# 深度思考模型（可选，空则复用默认模型配置）
-DEEP_MODEL_ENABLED=true
-DEEP_LLM_PROVIDER=
-DEEP_API_KEY=
-DEEP_BASE_URL=
-DEEP_MODEL=o1-mini
-DEEP_TEMPERATURE=0.1
-```
-
-> **注意**：启动后配置会迁移到 SQLite 数据库，之后通过管理后台的"模型配置"页面修改即可即时生效。
+> **提示**：`backend/.env.example` 仅供列示配置项参考，程序不再读取该文件。如需在首次启动时通过环境变量注入初始值，可设置同名 OS 环境变量（如 `API_KEY=xxx`），启动后仍会以数据库配置为准。
 
 ## 知识库结构
 
@@ -243,7 +215,7 @@ AnswerAgent/
 │   ├── tests/                       # 测试
 │   ├── Dockerfile
 │   ├── docker-entrypoint.sh
-│   ├── .env.example
+│   ├── .env.example          # 配置项参考（程序不再读取）
 │   └── requirements.txt
 ├── frontend/
 │   ├── src/

@@ -13,8 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 cd backend
 pip install -r requirements.txt
-cp .env.example .env   # 填入 API key
-python -m app.main      # 监听 0.0.0.0:8765
+python -m app.main      # 监听 0.0.0.0:8765（首次启动后通过 /admin 配置 API key）
 ```
 
 ### 前端

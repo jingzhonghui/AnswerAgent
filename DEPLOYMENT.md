@@ -36,29 +36,10 @@ git clone <仓库地址> answeragent
 cd answeragent
 ```
 
-### 2. 配置环境变量
+### 2. 启动配置
 
-```bash
-cd backend
-cp .env.example .env
-# 编辑 .env，填入必要的配置
-vi .env
-```
-
-最小配置需要以下项：
-
-```ini
-# LLM 提供商选择：openai | anthropic
-LLM_PROVIDER=openai
-
-# API 密钥
-API_KEY=sk-your-key-here
-
-# JWT 密钥（务必修改为随机字符串）
-JWT_SECRET_KEY=<生成一个随机字符串，建议 32 位以上>
-```
-
-完整配置项见 [配置参考](#配置参考)。
+配置已迁移到数据库管理，首次启动后通过管理后台 `/admin` 设置 LLM API key 等参数。
+如需通过环境变量注入初始值，可设置同名 OS 环境变量（如 `API_KEY=sk-xxx`）。
 
 ### 3. 知识库准备
 
@@ -262,8 +243,7 @@ cd /opt/answeragent/backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-vi .env    # 填入 API key 和 JWT secret
+# 首次启动后通过管理后台 /admin 配置 LLM API key
 
 # 2. 启动后端验证
 python -m app.main &
@@ -414,7 +394,6 @@ services:
     volumes:
       - /var/answeragent/knowledge:/app/knowledge
       - /var/answeragent/data:/app/data
-      - /var/answeragent/env:/app/.env
       # 可选：挂载自定义 skills 目录（内置 skills 会自动同步）
       # - /var/answeragent/skills:/app/skills
     restart: unless-stopped
@@ -432,7 +411,6 @@ services:
 > **持久化说明**：
 > - `/app/data` — SQLite 数据库 + 对话 JSON 文件，**必须持久化**
 > - `/app/knowledge` — 知识库文档，建议持久化
-> - `/app/.env` — 环境变量配置文件
 > - `/app/skills` — 可选，自定义 skills 目录（不挂载时自动使用内置 skills）
 
 ### 5. 配置 CORS（容器部署）
@@ -506,26 +484,23 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 
 ## 配置参考
 
-### 环境变量清单
+### 配置管理方式
 
-| 变量 | 必需 | 默认值 | 说明 |
-|------|------|--------|------|
-| `LLM_PROVIDER` | 是 | `openai` | LLM 提供商：`openai` 或 `anthropic` |
-| `API_KEY` | **是** | — | API 密钥（OpenAI 或 Anthropic，由 `LLM_PROVIDER` 决定协议） |
-| `BASE_URL` | 否 | — | API 地址（OpenAI 兼容 API 如 DeepSeek 需填写；Anthropic 可留空） |
-| `MODEL` | 否 | `gpt-4o` | 模型名称 |
-| `KNOWLEDGE_PATH` | 否 | `./knowledge` | 知识库目录路径 |
-| `DATA_PATH` | 否 | `./data/conversations` | 对话 JSON 文件存储路径 |
-| `HISTORY_WINDOW` | 否 | `10` | 保留的对话历史轮数 |
-| `JWT_SECRET_KEY` | **是** | — | JWT 签名密钥（生产环境务必修改） |
-| `JWT_ALGORITHM` | 否 | `HS256` | JWT 签名算法 |
-| `JWT_EXPIRE_MINUTES` | 否 | `1440` | JWT 过期时间（分钟） |
-| `DEEP_MODEL_ENABLED` | 否 | `true` | 是否启用深度思考（推理）模型 |
-| `DEEP_LLM_PROVIDER` | 否 | — | 推理模型 provider，空则复用 `LLM_PROVIDER` |
-| `DEEP_API_KEY` | 否 | — | 推理模型 API key，空则复用 `API_KEY` |
-| `DEEP_BASE_URL` | 否 | — | 推理模型 API 地址，空则复用 `BASE_URL` |
-| `DEEP_MODEL` | 否 | `o1-mini` | 推理模型名称 |
-| `DEEP_TEMPERATURE` | 否 | `0.1` | 推理模型采样温度 |
+所有运行时配置通过**管理后台**（`/admin` → 模型配置）管理，存储在 SQLite 数据库的 `model_config` 表中。
+配置修改后即时生效（`knowledge_path`、`data_path`、`jwt_*` 等需重启生效）。
+
+首次启动必需配置（通过管理后台设置）：
+
+| 配置键 | 说明 |
+|--------|------|
+| `llm_provider` | LLM 提供商：`openai` 或 `anthropic` |
+| `api_key` | API 密钥 |
+| `base_url` | API 地址（OpenAI 兼容 API 如 DeepSeek 需填写） |
+| `model` | 模型名称，默认 `gpt-4o` |
+
+> **提示**：`pydantic-settings` 仍会读取同名 OS 环境变量作为初始默认值（如 `API_KEY=xxx`），但启动后数据库中的配置会覆盖环境变量。`.env` 文件已不再使用。
+
+完整配置项列表见 [README.md](README.md#配置说明)。
 
 ### 端口映射
 
