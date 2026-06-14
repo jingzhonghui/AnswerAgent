@@ -282,7 +282,7 @@ async def execute_tasks(
     repo_type: str,
     completed_task_ids: List[str],
     log_callback: Optional[Callable[[str], None]] = None,
-    save_checkpoint: Optional[Callable[[], None]] = None,
+    save_checkpoint: Optional[Callable[[List[str]], None]] = None,
     is_cancelled: Optional[Callable[[], bool]] = None,
 ) -> List[str]:
     """按依赖顺序执行所有任务
@@ -333,7 +333,7 @@ async def execute_tasks(
         all_completed.append(task.id)
 
         if save_checkpoint:
-            save_checkpoint()
+            save_checkpoint(all_completed)
 
     return all_completed
 

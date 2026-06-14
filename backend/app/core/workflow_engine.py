@@ -340,6 +340,8 @@ class WorkflowEngine:
     async def _run(self, task_id: str) -> None:
         """主执行流程"""
         source_dir = None
+        result_completed = None
+        stage_progress = None
         try:
             row = await self._load_task(task_id)
             if not row:
@@ -439,11 +441,11 @@ class WorkflowEngine:
                 else:
                     stage_progress = raw_sp
 
-                def save_checkpoint():
+                def save_checkpoint(completed: list):
                     asyncio.ensure_future(
                         self._update_status(
                             task_id, "executing", stage="executing",
-                            completed_tasks=completed_tasks,
+                            completed_tasks=completed,
                             stage_progress=stage_progress,
                         )
                     )
@@ -507,9 +509,16 @@ class WorkflowEngine:
             error_msg = f"{type(e).__name__}: {e}"
             self._log(task_id, f"错误: {error_msg}")
             logger.exception(f"工作流 {task_id} 执行失败")
+            # 保存已完成的进度以支持断点续传
+            extra_kwargs = {}
+            if result_completed is not None:
+                extra_kwargs["completed_tasks"] = result_completed
+            if stage_progress is not None:
+                extra_kwargs["stage_progress"] = stage_progress
             await self._update_status(
                 task_id, "failed",
                 error=error_msg,
+                **extra_kwargs,
             )
         finally:
             self._running_id = None
