@@ -1,5 +1,6 @@
 import logging
 import sys
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -21,18 +22,40 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理：启动时初始化，关闭时清理"""
+    # --- startup ---
+    # 1. 从 Settings 硬编码默认值初始化配置缓存（同步）
+    model_config.init_from_settings()
+    # 2. 初始化数据库（含默认管理员创建）
+    await init_db()
+    # 3. 从 DB 加载配置覆盖默认值
+    await model_config.load_from_db()
+    # 4. 将 DB 配置同步回 settings 对象
+    _sync_config_to_settings()
+    # 5. 确保数据目录存在
+    settings.ensure_directories()
+
+    yield  # 应用在此运行
+
+    # --- shutdown ---
+    # 需要清理的资源可在此添加
+
+
 # 创建 FastAPI 应用
 app = FastAPI(
     title="AnswerAgent API",
     description="基于本地知识库的问答智能体 API",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # 配置 CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
+    allow_origins=["*"],
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -46,21 +69,6 @@ app.include_router(external_chat.router)
 app.include_router(auth.router)
 app.include_router(admin.router)
 app.include_router(workflow.router)
-
-
-@app.on_event("startup")
-async def startup():
-    """应用启动时初始化"""
-    # 1. 从 Settings 硬编码默认值初始化配置缓存（同步）
-    model_config.init_from_settings()
-    # 2. 初始化数据库（含默认管理员创建）
-    await init_db()
-    # 3. 从 DB 加载配置覆盖默认值
-    await model_config.load_from_db()
-    # 4. 将 DB 配置同步回 settings 对象（让 settings.xxx 调用自动获得 DB 值）
-    _sync_config_to_settings()
-    # 5. 确保数据目录存在
-    settings.ensure_directories()
 
 
 def _sync_config_to_settings() -> None:
