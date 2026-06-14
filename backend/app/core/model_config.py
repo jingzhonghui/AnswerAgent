@@ -122,7 +122,7 @@ async def load_from_db() -> None:
         if rows:
             logger.info(f"已从数据库加载 {len(rows)} 条模型配置")
     except Exception as e:
-        logger.warning(f"从数据库加载模型配置失败，使用 .env 默认值: {e}")
+        logger.warning(f"从数据库加载模型配置失败，使用硬编码默认值: {e}")
 
 
 def get(key: str, default: str = "") -> str:

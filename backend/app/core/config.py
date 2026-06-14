@@ -7,7 +7,15 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment/.env file."""
+    """Application settings — 默认值来源，运行时配置已迁移到数据库。
+
+所有配置已迁移到数据库 model_config 表管理。此 Settings 类仅在
+首次启动时提供硬编码默认值；运行时配置通过 core.model_config 服务
+（内存缓存 + SQLite 持久化）读取。
+
+注意：pydantic-settings 的 BaseSettings 仍会读取同名环境变量作为
+默认值，但数据库中的值优先级更高（main.py 启动流程会覆盖）。
+"""
 
     # LLM Provider（默认模型）
     llm_provider: str = "openai"  # "openai" | "anthropic"
@@ -40,7 +48,6 @@ class Settings(BaseSettings):
 
     class Config:
         # .env 文件已移除，所有配置通过数据库 model_config 表管理
-        env_file_encoding = "utf-8"
         case_sensitive = False
 
     def get_knowledge_path(self) -> Path:

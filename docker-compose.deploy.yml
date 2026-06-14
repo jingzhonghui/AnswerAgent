@@ -1,19 +1,18 @@
 services:
   backend:
-    build:
-      context: ./backend
+    # 如果导入的镜像名不同，修改 image 字段即可
+    image: answer-agent-backend:latest
     ports:
       - "8765:8765"
     volumes:
       - /var/answeragent/knowledge:/app/knowledge
       - /var/answeragent/data:/app/data
-      # 可选：挂载自定义 skills 目录（内置 skills 会自动同步到该目录）
+      # 可选：挂载自定义 skills
       # - /var/answeragent/skills:/app/skills
     restart: unless-stopped
 
   frontend:
-    build:
-      context: ./frontend
+    image: answer-agent-frontend:latest
     ports:
       - "5577:80"
     depends_on:

@@ -7,7 +7,7 @@
 - "openai"   -> ChatOpenAI（也兼容 DeepSeek、通义千问等 OpenAI 兼容 API）
 - "anthropic" -> ChatAnthropic
 
-配置优先级: 数据库 > .env > 默认值
+配置优先级: 数据库 > 环境变量 > 默认值
 通过 core.model_config 运行时配置服务读取，管理界面可热更新。
 """
 from __future__ import annotations
@@ -71,7 +71,7 @@ def create_chat_llm(
         if not api_key or api_key.startswith("sk-xxx"):
             raise LLMConfigError(
                 "API_KEY is not configured for OpenAI provider. "
-                "Please set API_KEY (or DEEP_API_KEY for deep mode) in admin panel or backend/.env"
+                "Please set API_KEY (or DEEP_API_KEY for deep mode) in admin panel"
             )
         return ChatOpenAI(
             api_key=api_key,
@@ -85,7 +85,7 @@ def create_chat_llm(
         if not api_key or api_key.startswith("sk-ant-xxx"):
             raise LLMConfigError(
                 "API_KEY is not configured for Anthropic provider. "
-                "Please set API_KEY (or DEEP_API_KEY for deep mode) in admin panel or backend/.env"
+                "Please set API_KEY (or DEEP_API_KEY for deep mode) in admin panel"
             )
         return ChatAnthropic(
             api_key=api_key,
