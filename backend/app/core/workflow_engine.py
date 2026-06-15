@@ -441,13 +441,11 @@ class WorkflowEngine:
                 else:
                     stage_progress = raw_sp
 
-                def save_checkpoint(completed: list):
-                    asyncio.ensure_future(
-                        self._update_status(
-                            task_id, "executing", stage="executing",
-                            completed_tasks=completed,
-                            stage_progress=stage_progress,
-                        )
+                async def save_checkpoint(completed: list):
+                    await self._update_status(
+                        task_id, "executing", stage="executing",
+                        completed_tasks=completed,
+                        stage_progress=stage_progress,
                     )
 
                 def is_cancelled():
