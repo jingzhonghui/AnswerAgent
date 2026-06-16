@@ -216,8 +216,8 @@ def _build_candidates(kb_root: Path) -> List[FileCandidate]:
             rel = abs_path.resolve().relative_to(kb_root).as_posix()
         except ValueError:
             continue
-        # 不把 索引.md 自身作为候选（它会单独作为路由提示）
-        if rel in ("索引.md", "index.md"):
+        # 不把优先入口文件作为候选（它们已在 Step 1 无条件加载）
+        if rel in ("索引.md", "index.md", "overview.md"):
             continue
         candidates.append(FileCandidate(
             rel_path=rel,

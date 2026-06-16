@@ -79,13 +79,34 @@ def _is_safe_path(member_path: str, target_dir: Path) -> bool:
     return str(resolved).startswith(str(target_dir.resolve()))
 
 
+def _open_zip_with_encoding(zip_path: str) -> zipfile.ZipFile:
+    """尝试多种编码打开 ZIP 文件，解决中文文件名乱码问题。
+
+    Windows 创建的 ZIP 通常用 GBK 编码中文名，macOS/Linux 用 UTF-8。
+    优先 GBK，解码失败或出现乱码则回退 UTF-8。
+    """
+    # 先尝试 GBK（Windows 中文系统默认）
+    try:
+        zf = zipfile.ZipFile(zip_path, "r", metadata_encoding="gbk")
+    except UnicodeDecodeError:
+        # GBK 无法解码（如包含 0x80 等非法字节），回退 UTF-8
+        return zipfile.ZipFile(zip_path, "r", metadata_encoding="utf-8")
+
+    # 简单探测：如果文件名中有典型的 CP437 乱码字符（如 ©、® 等），回退 UTF-8
+    for name in zf.namelist():
+        if any(ord(c) > 127 and c in "®©«¬" for c in name):
+            zf.close()
+            return zipfile.ZipFile(zip_path, "r", metadata_encoding="utf-8")
+    return zf
+
+
 def extract_archive(file_path: Path, dest_dir: Path) -> Path:
     """解压压缩包到目标目录，返回源文件根目录"""
     fmt = detect_archive_format(file_path)
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     if fmt == "zip":
-        with zipfile.ZipFile(file_path, "r") as zf:
+        with _open_zip_with_encoding(str(file_path)) as zf:
             file_count = len(zf.infolist())
             if file_count > MAX_FILE_COUNT:
                 raise ValueError(f"压缩包文件数 {file_count} 超过上限 {MAX_FILE_COUNT}")

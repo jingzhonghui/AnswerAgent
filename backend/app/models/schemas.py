@@ -175,6 +175,11 @@ class AdminUserUpdate(BaseModel):
     is_admin: Optional[bool] = Field(None, description="是否设为管理员")
 
 
+class AdminResetPasswordRequest(BaseModel):
+    """管理员重置用户密码请求"""
+    new_password: str = Field(..., min_length=6, max_length=100, description="新密码")
+
+
 class AdminUserInfo(BaseModel):
     """管理员视角的用户信息"""
     id: str = Field(..., description="用户 ID")

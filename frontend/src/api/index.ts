@@ -270,6 +270,14 @@ export async function deleteAdminUser(userId: string): Promise<void> {
   await api.delete(`/admin/users/${userId}`)
 }
 
+// 管理员重置用户密码
+export async function resetUserPassword(userId: string, newPassword: string): Promise<{ message: string }> {
+  const response = await api.post<{ message: string }>(`/admin/users/${userId}/reset-password`, {
+    new_password: newPassword,
+  })
+  return response.data
+}
+
 // 获取所有对话（管理员视角）
 export async function getAdminConversations(params?: { user_id?: string; search?: string }): Promise<AdminConversationSummary[]> {
   const response = await api.get<AdminConversationSummary[]>('/admin/conversations', { params })
@@ -442,6 +450,39 @@ export async function deleteKbFile(kbName: string, filePath: string): Promise<vo
   await api.delete(`/admin/knowledge-bases/${encodeURIComponent(kbName)}/files`, {
     data: { file_path: filePath },
   })
+}
+
+/** 下载知识库单个文件 */
+export async function downloadKbFile(kbName: string, filePath: string): Promise<void> {
+  const response = await api.get(
+    `/admin/knowledge-bases/${encodeURIComponent(kbName)}/files/download`,
+    { params: { file_path: filePath }, responseType: 'blob' },
+  )
+  const filename = filePath.split('/').pop() || 'file'
+  const url = URL.createObjectURL(new Blob([response.data]))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
+/** 下载整个知识库为 ZIP */
+export async function downloadKnowledgeBase(kbName: string): Promise<void> {
+  const response = await api.get(
+    `/admin/knowledge-bases/${encodeURIComponent(kbName)}/download`,
+    { responseType: 'blob' },
+  )
+  const url = URL.createObjectURL(new Blob([response.data], { type: 'application/zip' }))
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${kbName}.zip`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
 }
 
 export default api

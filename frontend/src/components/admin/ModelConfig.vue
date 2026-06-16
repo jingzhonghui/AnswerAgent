@@ -12,7 +12,23 @@ const messageType = ref<'success' | 'error'>('success')
 // 敏感字段（API Key）显示为密码框
 const sensitiveKeys = new Set(['api_key', 'deep_api_key'])
 
-// 系统配置键（非 LLM 配置）
+// 密码可见性切换
+const visibleKeys = ref<Set<string>>(new Set())
+
+function toggleVisibility(key: string) {
+  if (visibleKeys.value.has(key)) {
+    visibleKeys.value.delete(key)
+  } else {
+    visibleKeys.value.add(key)
+  }
+  // 触发响应式更新
+  visibleKeys.value = new Set(visibleKeys.value)
+}
+
+function getInputType(key: string): string {
+  if (!sensitiveKeys.has(key)) return 'text'
+  return visibleKeys.value.has(key) ? 'text' : 'password'
+}
 const systemConfigKeys = new Set(['history_window', 'knowledge_path', 'data_path', 'jwt_algorithm', 'jwt_expire_minutes'])
 
 // LLM 默认模型配置键（不含 deep_ 前缀）
@@ -99,10 +115,6 @@ function showMessage(msg: string, type: 'success' | 'error') {
   messageType.value = type
   setTimeout(() => { message.value = '' }, 3000)
 }
-
-function getInputType(key: string): string {
-  return sensitiveKeys.has(key) ? 'password' : 'text'
-}
 </script>
 
 <template>
@@ -151,6 +163,29 @@ function getInputType(key: string): string {
                 {{ opt.label }}
               </option>
             </select>
+            <div v-else-if="sensitiveKeys.has(cfg.key)" class="password-wrapper">
+              <input
+                :id="cfg.key"
+                v-model="cfg.value"
+                :type="getInputType(cfg.key)"
+                class="form-input"
+              />
+              <button
+                type="button"
+                class="toggle-password"
+                :title="visibleKeys.has(cfg.key) ? '隐藏密码' : '显示密码'"
+                @click="toggleVisibility(cfg.key)"
+              >
+                <svg v-if="visibleKeys.has(cfg.key)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
             <input
               v-else
               :id="cfg.key"
@@ -189,6 +224,29 @@ function getInputType(key: string): string {
                 {{ opt.label }}
               </option>
             </select>
+            <div v-else-if="sensitiveKeys.has(cfg.key)" class="password-wrapper">
+              <input
+                :id="cfg.key"
+                v-model="cfg.value"
+                :type="getInputType(cfg.key)"
+                class="form-input"
+              />
+              <button
+                type="button"
+                class="toggle-password"
+                :title="visibleKeys.has(cfg.key) ? '隐藏密码' : '显示密码'"
+                @click="toggleVisibility(cfg.key)"
+              >
+                <svg v-if="visibleKeys.has(cfg.key)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24"/>
+                  <line x1="1" y1="1" x2="23" y2="23"/>
+                </svg>
+                <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
             <input
               v-else
               :id="cfg.key"
@@ -487,6 +545,44 @@ function getInputType(key: string): string {
   font-size: 11px;
   color: var(--text-tertiary);
   margin-top: 3px;
+}
+
+.password-wrapper {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.password-wrapper .form-input {
+  padding-right: 36px;
+}
+
+.toggle-password {
+  position: absolute;
+  right: 2px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  color: var(--text-tertiary);
+  transition: color 0.15s, background 0.15s;
+}
+
+.toggle-password:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.toggle-password svg {
+  width: 16px;
+  height: 16px;
 }
 
 .restart-badge {

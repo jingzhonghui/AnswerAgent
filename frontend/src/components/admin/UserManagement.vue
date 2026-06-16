@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { getAdminUsers, createAdminUser, updateAdminUser, deleteAdminUser } from '@/api'
+import { getAdminUsers, createAdminUser, updateAdminUser, deleteAdminUser, resetUserPassword } from '@/api'
 import { useAuthStore } from '@/stores/auth'
 import type { AdminUserInfo } from '@/types'
 
@@ -86,6 +86,41 @@ async function handleDelete(user: AdminUserInfo) {
     showMessage(`已删除用户: ${user.username}`, 'success')
   } catch (e: any) {
     showMessage(e?.response?.data?.detail || '删除失败', 'error')
+  }
+}
+
+// 重置密码
+const showResetPwdModal = ref(false)
+const resetPwdTarget = ref<AdminUserInfo | null>(null)
+const resetPwdNew = ref('')
+const isResettingPwd = ref(false)
+
+function openResetPwdModal(user: AdminUserInfo) {
+  resetPwdTarget.value = user
+  resetPwdNew.value = ''
+  showResetPwdModal.value = true
+}
+
+function closeResetPwdModal() {
+  showResetPwdModal.value = false
+  resetPwdTarget.value = null
+}
+
+async function handleResetPassword() {
+  if (!resetPwdTarget.value) return
+  if (!resetPwdNew.value.trim() || resetPwdNew.value.length < 6) {
+    showMessage('新密码长度至少 6 位', 'error')
+    return
+  }
+  isResettingPwd.value = true
+  try {
+    await resetUserPassword(resetPwdTarget.value.id, resetPwdNew.value)
+    showMessage(`已重置用户 "${resetPwdTarget.value.username}" 的密码`, 'success')
+    closeResetPwdModal()
+  } catch (e: any) {
+    showMessage(e?.response?.data?.detail || '重置失败', 'error')
+  } finally {
+    isResettingPwd.value = false
   }
 }
 
@@ -177,6 +212,12 @@ function formatDate(dateStr: string): string {
               {{ user.is_admin ? '取消管理员' : '设为管理员' }}
             </button>
             <button
+              class="btn-sm btn-reset"
+              @click="openResetPwdModal(user)"
+            >
+              重置密码
+            </button>
+            <button
               class="btn-sm btn-danger"
               :disabled="user.id === authStore.user?.id"
               @click="handleDelete(user)"
@@ -187,6 +228,36 @@ function formatDate(dateStr: string): string {
         </tr>
       </tbody>
     </table>
+
+    <!-- 重置密码弹窗 -->
+    <div v-if="showResetPwdModal" class="modal-overlay" @click.self="closeResetPwdModal">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h3>重置密码</h3>
+          <button class="modal-close" @click="closeResetPwdModal">✕</button>
+        </div>
+        <div class="modal-body">
+          <p>为用户 "<strong>{{ resetPwdTarget?.username }}</strong>" 设置新密码</p>
+          <label class="form-label">新密码</label>
+          <input
+            v-model="resetPwdNew"
+            type="password"
+            class="form-input"
+            placeholder="至少 6 位"
+            :disabled="isResettingPwd"
+            @keyup.enter="handleResetPassword"
+          />
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-cancel" @click="closeResetPwdModal" :disabled="isResettingPwd">
+            取消
+          </button>
+          <button class="btn btn-primary" @click="handleResetPassword" :disabled="isResettingPwd">
+            {{ isResettingPwd ? '重置中...' : '确认重置' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
@@ -474,5 +545,144 @@ function formatDate(dateStr: string): string {
 .actions-cell {
   display: flex;
   gap: 6px;
+}
+
+.btn-reset {
+  color: var(--accent-color);
+  border-color: var(--accent-color);
+}
+
+.btn-reset:hover:not(:disabled) {
+  background: rgba(78, 110, 242, 0.08);
+}
+
+/* 重置密码弹窗 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-card {
+  background: var(--bg-sidebar);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  width: 100%;
+  max-width: 400px;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 24px 0;
+}
+
+.modal-header h3 {
+  font-size: 17px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.modal-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.modal-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.modal-body {
+  padding: 20px 24px;
+}
+
+.modal-body p {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--text-secondary);
+}
+
+.form-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+.modal-body .form-input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+}
+
+.modal-body .form-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(78, 110, 242, 0.15);
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 24px 20px;
+}
+
+.modal-footer .btn {
+  padding: 8px 18px;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-primary {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.btn-primary:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-cancel {
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  border: 1px solid var(--border-color) !important;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text-primary);
 }
 </style>

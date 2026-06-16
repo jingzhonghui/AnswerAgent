@@ -8,6 +8,8 @@ import {
   deleteKnowledgeBase,
   uploadKbFile,
   deleteKbFile,
+  downloadKbFile,
+  downloadKnowledgeBase,
 } from '@/api'
 import type { KbSummary, KbFileInfo } from '@/types'
 
@@ -212,6 +214,25 @@ async function handleDeleteItem(item: KbFileInfo) {
   }
 }
 
+async function handleDownloadFile(item: KbFileInfo) {
+  if (!selectedKb.value || item.is_dir) return
+  try {
+    await downloadKbFile(selectedKb.value, item.rel_path)
+    showToast('success', `文件 "${item.name}" 下载中…`)
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '下载失败')
+  }
+}
+
+async function handleDownloadKb(name: string) {
+  try {
+    await downloadKnowledgeBase(name)
+    showToast('success', `知识库 "${name}" 下载中…`)
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '下载失败')
+  }
+}
+
 function onZipFileChange(e: Event) {
   const input = e.target as HTMLInputElement
   uploadZipFile.value = input.files?.[0] || null
@@ -251,19 +272,32 @@ onMounted(() => {
           >
             <div class="kb-item-header">
               <span class="kb-item-name">📁 {{ kb.name }}</span>
-              <button
-                class="kb-item-delete"
-                title="删除知识库"
-                @click.stop="showDeleteKbConfirm = kb.name"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="3 6 5 6 21 6" />
-                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                  <path d="M10 11v6" />
-                  <path d="M14 11v6" />
-                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                </svg>
-              </button>
+              <div class="kb-item-actions">
+                <button
+                  class="kb-item-action-btn"
+                  title="下载知识库"
+                  @click.stop="handleDownloadKb(kb.name)"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="7 10 12 15 17 10" />
+                    <line x1="12" y1="15" x2="12" y2="3" />
+                  </svg>
+                </button>
+                <button
+                  class="kb-item-action-btn kb-item-delete"
+                  title="删除知识库"
+                  @click.stop="showDeleteKbConfirm = kb.name"
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6" />
+                    <path d="M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+              </div>
             </div>
             <div class="kb-item-meta">
               <span>{{ kb.file_count }} 个文件</span>
@@ -278,7 +312,7 @@ onMounted(() => {
           <button class="btn btn-primary" @click="showCreateModal = true">
             🎲 新建知识库
           </button>
-          <button class="btn btn-secondary" @click="showUploadZipModal = true">
+          <button class="btn btn-accent" @click="showUploadZipModal = true">
             📦 上传 ZIP
           </button>
         </div>
@@ -297,7 +331,7 @@ onMounted(() => {
           <div class="kb-main-header">
             <h3>📁 {{ selectedKb }}</h3>
             <button class="btn btn-accent" @click="showUploadFileModal = true">
-              ⬆️ 上传文件到当前目录
+              ⬆️ 上传文档
             </button>
           </div>
 
@@ -344,31 +378,47 @@ onMounted(() => {
                 @dblclick="enterDir(item)"
               >
                 <td class="item-name">
-                  <span class="item-icon">{{ item.is_dir ? '📁' : '📄' }}</span>
-                  <span class="item-name-text">{{ item.name }}</span>
+                  <div class="item-name-inner">
+                    <span class="item-icon">{{ item.is_dir ? '📁' : '📄' }}</span>
+                    <span class="item-name-text">{{ item.name }}</span>
+                  </div>
                 </td>
                 <td class="item-size">
                   {{ item.is_dir ? '-' : formatSize(item.size) }}
                 </td>
                 <td class="item-time">{{ formatTime(item.modified) }}</td>
                 <td class="item-action">
-                  <button
-                    class="btn-delete"
-                    :title="`删除${item.is_dir ? '目录' : '文件'}`"
-                    @click="showDeleteConfirm = {
-                      relPath: item.rel_path,
-                      name: item.name,
-                      isDir: item.is_dir,
-                    }"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
+                  <div class="action-group">
+                    <button
+                      v-if="!item.is_dir"
+                      class="btn-download"
+                      title="下载文件"
+                      @click="handleDownloadFile(item)"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                        <polyline points="7 10 12 15 17 10" />
+                        <line x1="12" y1="15" x2="12" y2="3" />
+                      </svg>
+                    </button>
+                    <button
+                      class="btn-delete"
+                      :title="`删除${item.is_dir ? '目录' : '文件'}`"
+                      @click="showDeleteConfirm = {
+                        relPath: item.rel_path,
+                        name: item.name,
+                        isDir: item.is_dir,
+                      }"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="3 6 5 6 21 6" />
+                        <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                        <path d="M10 11v6" />
+                        <path d="M14 11v6" />
                       <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
                     </svg>
                   </button>
+                  </div>
                 </td>
               </tr>
             </tbody>
@@ -420,11 +470,11 @@ onMounted(() => {
       </div>
 
       <!-- ============================================================ -->
-      <!-- 弹窗：上传文件到当前目录 -->
+      <!-- 弹窗：上传文档 -->
       <!-- ============================================================ -->
       <div v-if="showUploadFileModal" class="modal-overlay" @click.self="showUploadFileModal = false">
         <div class="modal-card">
-          <h4>⬆️ 上传文件到 "{{ selectedKb }}"</h4>
+          <h4>⬆️ 上传文档到 "{{ selectedKb }}"</h4>
           <p v-if="currentPath" class="upload-path-hint">📂 {{ currentPath }}</p>
           <p v-else class="upload-path-hint">📂 根目录</p>
           <label class="form-label">选择文件</label>
@@ -582,34 +632,52 @@ onMounted(() => {
   flex: 1;
 }
 
-.kb-item-delete {
+.kb-item-actions {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+
+.kb-item-action-btn {
   opacity: 0;
   background: none;
   border: none;
-  color: #e74c3c;
   cursor: pointer;
   padding: 2px 4px;
   border-radius: 3px;
   display: flex;
   align-items: center;
   transition: opacity 0.15s, background 0.15s;
+  color: var(--text-secondary);
 }
 
-.kb-item:hover .kb-item-delete {
+.kb-item-action-btn:hover {
+  background: var(--bg-primary);
+}
+
+.kb-item:hover .kb-item-action-btn {
   opacity: 1;
 }
 
-.kb-item.active .kb-item-delete {
-  color: rgba(255, 255, 255, 0.9);
+.kb-item.active .kb-item-action-btn {
+  color: rgba(255, 255, 255, 0.8);
+}
+
+.kb-item.active .kb-item-action-btn:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.kb-item-delete {
+  color: #e74c3c;
 }
 
 .kb-item-delete:hover {
   background: rgba(231, 76, 60, 0.15);
 }
 
-.kb-item.active .kb-item-delete:hover {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.25);
+.kb-item.active .kb-item-delete {
+  color: rgba(255, 255, 255, 0.9);
 }
 
 .kb-item-meta {
@@ -747,10 +815,13 @@ onMounted(() => {
 }
 
 .item-name {
+  max-width: 350px;
+}
+
+.item-name-inner {
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: 350px;
 }
 
 .item-icon {
@@ -776,7 +847,13 @@ onMounted(() => {
 }
 
 .item-action {
-  text-align: center;
+  text-align: left;
+}
+
+.action-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 /* ============================================================
@@ -860,6 +937,23 @@ onMounted(() => {
 .btn-delete:hover {
   background: rgba(231, 76, 60, 0.1);
   border-color: rgba(231, 76, 60, 0.3);
+}
+
+.btn-download {
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--accent-color);
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-download:hover {
+  background: rgba(78, 110, 242, 0.1);
+  border-color: rgba(78, 110, 242, 0.3);
 }
 
 /* ============================================================

@@ -33,6 +33,7 @@ from core.security import hash_password, create_access_token
 from models.schemas import (
     AdminUserCreate,
     AdminUserInfo,
+    AdminResetPasswordRequest,
     AdminConversationSummary,
     ConversationDetail,
     ModelConfigUpdate,
@@ -205,6 +206,42 @@ async def update_user(
         created_at=datetime.fromisoformat(row["created_at"]),
         conversation_count=conv_count,
     )
+
+
+@router.post("/users/{user_id}/reset-password")
+async def reset_user_password(
+    user_id: str,
+    data: AdminResetPasswordRequest,
+    admin: dict = Depends(get_current_admin_user),
+):
+    """管理员重置用户密码
+
+    Args:
+        user_id: 要重置密码的用户 ID
+        data: 新密码
+
+    Returns:
+        dict: {"message": "密码已重置"}
+    """
+    async with get_db() as db:
+        cursor = await db.execute(
+            "SELECT id FROM users WHERE id = ?",
+            (user_id,),
+        )
+        if not await cursor.fetchone():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="用户不存在",
+            )
+
+        new_hash = hash_password(data.new_password)
+        await db.execute(
+            "UPDATE users SET password_hash = ? WHERE id = ?",
+            (new_hash, user_id),
+        )
+        await db.commit()
+
+    return {"message": "密码已重置"}
 
 
 @router.delete("/users/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

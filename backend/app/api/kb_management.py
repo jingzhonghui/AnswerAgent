@@ -12,6 +12,7 @@ from pathlib import Path
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse
 
 from core.config import settings
 from core.deps import get_current_admin_user
@@ -197,6 +198,27 @@ async def create_knowledge_base(
     return {"name": name, "message": "知识库已创建"}
 
 
+def _open_zip_with_encoding(zip_path: str) -> zipfile.ZipFile:
+    """尝试多种编码打开 ZIP 文件，解决中文文件名乱码问题。
+
+    Windows 创建的 ZIP 通常用 GBK 编码中文名，macOS/Linux 用 UTF-8。
+    优先 GBK，解码失败或出现乱码则回退 UTF-8。
+    """
+    # 先尝试 GBK（Windows 中文系统默认）
+    try:
+        zf = zipfile.ZipFile(zip_path, "r", metadata_encoding="gbk")
+    except UnicodeDecodeError:
+        # GBK 无法解码（如包含 0x80 等非法字节），回退 UTF-8
+        return zipfile.ZipFile(zip_path, "r", metadata_encoding="utf-8")
+
+    # 简单探测：如果文件名中有典型的 CP437 乱码字符（如 ©、® 等），回退 UTF-8
+    for name in zf.namelist():
+        if any(ord(c) > 127 and c in "®©«¬" for c in name):
+            zf.close()
+            return zipfile.ZipFile(zip_path, "r", metadata_encoding="utf-8")
+    return zf
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_kb_zip(
     file: UploadFile = File(...),
@@ -234,7 +256,7 @@ async def upload_kb_zip(
     file_count = 0
     try:
         kb_path.mkdir(parents=True)
-        with zipfile.ZipFile(tmp_path, "r") as zf:
+        with _open_zip_with_encoding(tmp_path) as zf:
             for entry in zf.infolist():
                 # 跳过目录
                 if entry.is_dir():
@@ -388,3 +410,71 @@ async def delete_kb_file(
     else:
         os.remove(target)
         return {"message": f"文件 '{file_path}' 已删除"}
+
+
+# ---------------------------------------------------------------------------
+# 下载端点
+# ---------------------------------------------------------------------------
+
+@router.get("/{kb_name}/files/download")
+async def download_kb_file(
+    kb_name: str,
+    file_path: str = Query(..., description="文件相对路径"),
+    admin: dict = Depends(get_current_admin_user),
+):
+    """下载知识库中的单个文件"""
+    root = settings.get_knowledge_path()
+    kb_path = _safe_resolve_in_kb(root, root / kb_name)
+    if not kb_path.exists() or not kb_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"知识库 '{kb_name}' 不存在",
+        )
+
+    target = _safe_resolve_in_kb(kb_path, kb_path / file_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"文件 '{file_path}' 不存在",
+        )
+
+    return FileResponse(
+        path=str(target),
+        filename=target.name,
+        media_type="application/octet-stream",
+    )
+
+
+@router.get("/{kb_name}/download")
+async def download_knowledge_base(
+    kb_name: str,
+    admin: dict = Depends(get_current_admin_user),
+):
+    """下载整个知识库为 ZIP 压缩包"""
+    root = settings.get_knowledge_path()
+    kb_path = _safe_resolve_in_kb(root, root / kb_name)
+    if not kb_path.exists() or not kb_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"知识库 '{kb_name}' 不存在",
+        )
+
+    # 创建临时 ZIP 文件
+    tmp_dir = tempfile.mkdtemp()
+    zip_base = os.path.join(tmp_dir, kb_name)
+    try:
+        zip_path = shutil.make_archive(
+            base_name=zip_base,
+            format="zip",
+            root_dir=str(kb_path.parent),
+            base_dir=kb_name,
+        )
+        return FileResponse(
+            path=zip_path,
+            filename=f"{kb_name}.zip",
+            media_type="application/zip",
+            background=lambda: shutil.rmtree(tmp_dir, ignore_errors=True),
+        )
+    except Exception:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        raise

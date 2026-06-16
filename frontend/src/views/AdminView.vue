@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { apiChangePassword } from '@/api'
@@ -13,7 +13,20 @@ const router = useRouter()
 const authStore = useAuthStore()
 
 type TabKey = 'model' | 'users' | 'conversations' | 'workflow' | 'knowledge'
-const activeTab = ref<TabKey>('model')
+
+function getSavedTab(): TabKey {
+  const saved = localStorage.getItem('admin_active_tab')
+  if (saved && ['model', 'users', 'conversations', 'workflow', 'knowledge'].includes(saved)) {
+    return saved as TabKey
+  }
+  return 'model'
+}
+
+const activeTab = ref<TabKey>(getSavedTab())
+
+watch(activeTab, (val) => {
+  localStorage.setItem('admin_active_tab', val)
+})
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: 'model', label: '模型配置', icon: '⚙️' },
@@ -30,10 +43,34 @@ const passwordMessage = ref('')
 const passwordMessageType = ref<'success' | 'error'>('success')
 const isChangingPassword = ref(false)
 
+// 用户菜单
+const showMenu = ref(false)
+const menuRef = ref<HTMLElement | null>(null)
+
+function toggleMenu() {
+  showMenu.value = !showMenu.value
+}
+
+function handleMenuAction(action: () => void) {
+  action()
+  showMenu.value = false
+}
+
+function onClickOutside(event: MouseEvent) {
+  if (menuRef.value && !menuRef.value.contains(event.target as Node)) {
+    showMenu.value = false
+  }
+}
+
 onMounted(() => {
   if (!authStore.isAdmin) {
     router.replace('/admin/login')
   }
+  document.addEventListener('click', onClickOutside)
+})
+
+onUnmounted(() => {
+  document.removeEventListener('click', onClickOutside)
 })
 
 function backToChat() {
@@ -113,15 +150,44 @@ async function handleChangePassword() {
       </nav>
 
       <div class="admin-footer">
-        <button class="footer-btn password-btn" @click="openPasswordModal">
-          🔑 修改密码
-        </button>
-        <button class="footer-btn back-btn" @click="backToChat">
-          ← 返回聊天
-        </button>
-        <button class="footer-btn logout-btn" @click="handleLogout">
-          🚪 退出登录
-        </button>
+        <div class="user-info">
+          <div class="user-avatar">{{ authStore.user?.username?.charAt(0).toUpperCase() || 'A' }}</div>
+          <span class="user-name">{{ authStore.user?.username || 'Admin' }}</span>
+        </div>
+        <div class="user-menu-wrapper" ref="menuRef">
+          <button class="menu-trigger" @click.stop="toggleMenu" title="更多">
+            <svg viewBox="0 0 24 24" fill="currentColor">
+              <circle cx="5" cy="12" r="2"/>
+              <circle cx="12" cy="12" r="2"/>
+              <circle cx="19" cy="12" r="2"/>
+            </svg>
+          </button>
+          <Transition name="menu-dropdown">
+            <div v-if="showMenu" class="dropdown-menu">
+              <button class="menu-item" @click="handleMenuAction(openPasswordModal)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+                  <path d="M7 11V7a5 5 0 0110 0v4"/>
+                </svg>
+                <span>修改密码</span>
+              </button>
+              <button class="menu-item" @click="handleMenuAction(backToChat)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+                </svg>
+                <span>返回聊天</span>
+              </button>
+              <button class="menu-item logout-item" @click="handleMenuAction(handleLogout)">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/>
+                  <polyline points="16 17 21 12 16 7"/>
+                  <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+                <span>退出登录</span>
+              </button>
+            </div>
+          </Transition>
+        </div>
       </div>
     </aside>
 
@@ -279,50 +345,133 @@ async function handleChangePassword() {
 }
 
 .admin-footer {
-  padding: 12px 8px;
+  padding: 12px 12px;
   border-top: 1px solid var(--border-color);
   display: flex;
-  flex-direction: column;
-  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
 }
 
-.footer-btn {
+.user-info {
   display: flex;
   align-items: center;
-  gap: 6px;
-  width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border-color);
-  border-radius: var(--radius-sm);
-  background: var(--bg-primary);
-  color: var(--text-secondary);
-  font-size: 13px;
+  gap: 10px;
+  padding: 8px 12px;
+  border-radius: var(--radius-md);
   cursor: pointer;
+  transition: background 0.2s;
+}
+
+.user-info:hover {
+  background: var(--bg-hover);
+}
+
+.user-avatar {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-color);
+  color: white;
+  border-radius: var(--radius-full);
+  font-size: 14px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.user-name {
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.user-menu-wrapper {
+  position: relative;
+}
+
+.menu-trigger {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
   transition: all 0.15s;
 }
 
-.footer-btn:hover {
+.menu-trigger:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
-  border-color: var(--accent-color);
 }
 
-.password-btn:hover {
+.menu-trigger svg {
+  width: 16px;
+  height: 16px;
+}
+
+.dropdown-menu {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: 4px;
+  min-width: 150px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  z-index: 100;
+}
+
+.menu-item {
+  width: 100%;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.menu-item:hover {
   background: var(--bg-hover);
-  color: var(--accent-color);
-  border-color: var(--accent-color);
+  color: var(--text-primary);
 }
 
-.logout-btn:hover {
+.menu-item svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.logout-item:hover {
   background: #fef2f2;
   color: #dc2626;
-  border-color: #dc2626;
 }
 
-[data-theme="dark"] .logout-btn:hover {
+[data-theme="dark"] .logout-item:hover {
   background: #7f1d1d;
   color: #fca5a5;
-  border-color: #fca5a5;
+}
+
+.menu-dropdown-enter-active,
+.menu-dropdown-leave-active {
+  transition: all 0.15s ease;
+}
+
+.menu-dropdown-enter-from,
+.menu-dropdown-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 
 .admin-main {
