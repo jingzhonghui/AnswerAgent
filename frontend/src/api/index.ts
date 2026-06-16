@@ -378,4 +378,70 @@ export async function streamWorkflowLog(
   })
 }
 
+// ============================================================
+// 知识库管理 API
+// ============================================================
+
+import type { KbSummary, KbFileList, CreateKbRequest } from '@/types'
+
+/** 获取知识库列表 */
+export async function getKbList(): Promise<{ knowledge_bases: KbSummary[] }> {
+  const { data } = await api.get('/admin/knowledge-bases')
+  return data
+}
+
+/** 获取知识库文件列表（文件浏览器模式，非递归） */
+export async function getKbFiles(kbName: string, subPath?: string): Promise<KbFileList> {
+  const params = subPath ? { path: subPath } : {}
+  const { data } = await api.get(`/admin/knowledge-bases/${encodeURIComponent(kbName)}/files`, { params })
+  return data
+}
+
+/** 创建空知识库 */
+export async function createKnowledgeBase(payload: CreateKbRequest): Promise<{ name: string; message: string }> {
+  const { data } = await api.post('/admin/knowledge-bases', payload)
+  return data
+}
+
+/** 上传 ZIP 创建知识库 */
+export async function uploadKbZip(file: File, name?: string): Promise<{ name: string; file_count: number; message: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  if (name) form.append('name', name)
+  const { data } = await api.post('/admin/knowledge-bases/upload', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+  return data
+}
+
+/** 删除知识库 */
+export async function deleteKnowledgeBase(name: string): Promise<void> {
+  await api.delete(`/admin/knowledge-bases/${encodeURIComponent(name)}`)
+}
+
+/** 上传文件到知识库 */
+export async function uploadKbFile(
+  kbName: string,
+  file: File,
+  subPath?: string,
+): Promise<{ file_name: string; rel_path: string; message: string }> {
+  const form = new FormData()
+  form.append('file', file)
+  if (subPath) form.append('path', subPath)
+  const { data } = await api.post(
+    `/admin/knowledge-bases/${encodeURIComponent(kbName)}/files`,
+    form,
+    { headers: { 'Content-Type': 'multipart/form-data' } },
+  )
+  return data
+}
+
+/** 删除知识库文件 */
+export async function deleteKbFile(kbName: string, filePath: string): Promise<void> {
+  await api.delete(`/admin/knowledge-bases/${encodeURIComponent(kbName)}/files`, {
+    data: { file_path: filePath },
+  })
+}
+
 export default api

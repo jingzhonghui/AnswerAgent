@@ -7,11 +7,12 @@ import ModelConfig from '@/components/admin/ModelConfig.vue'
 import UserManagement from '@/components/admin/UserManagement.vue'
 import ConversationManagement from '@/components/admin/ConversationManagement.vue'
 import KbWorkflow from '@/components/admin/KbWorkflow.vue'
+import KbManagement from '@/components/admin/KbManagement.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
 
-type TabKey = 'model' | 'users' | 'conversations' | 'workflow'
+type TabKey = 'model' | 'users' | 'conversations' | 'workflow' | 'knowledge'
 const activeTab = ref<TabKey>('model')
 
 const tabs: { key: TabKey; label: string; icon: string }[] = [
@@ -19,6 +20,7 @@ const tabs: { key: TabKey; label: string; icon: string }[] = [
   { key: 'users', label: '用户管理', icon: '👥' },
   { key: 'conversations', label: '会话管理', icon: '💬' },
   { key: 'workflow', label: '知识库生成', icon: '📚' },
+  { key: 'knowledge', label: '知识库管理', icon: '📁' },
 ]
 
 // 修改密码弹窗
@@ -129,6 +131,7 @@ async function handleChangePassword() {
       <UserManagement v-else-if="activeTab === 'users'" />
       <ConversationManagement v-else-if="activeTab === 'conversations'" />
       <KbWorkflow v-else-if="activeTab === 'workflow'" />
+      <KbManagement v-else-if="activeTab === 'knowledge'" />
     </main>
   </div>
 

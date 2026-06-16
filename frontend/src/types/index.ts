@@ -148,3 +148,37 @@ export interface WorkflowLogEntry {
   timestamp: string
   message: string
 }
+
+// ============================================================
+// 知识库管理类型
+// ============================================================
+
+/** 知识库摘要信息 */
+export interface KbSummary {
+  name: string
+  file_count: number
+  last_modified: string | null
+  total_size: number
+}
+
+/** 知识库内文件/目录信息 */
+export interface KbFileInfo {
+  name: string
+  rel_path: string
+  size: number
+  modified: string
+  extension: string
+  is_dir: boolean
+}
+
+/** 知识库文件列表（文件浏览器模式） */
+export interface KbFileList {
+  kb_name: string
+  current_path: string
+  items: KbFileInfo[]
+}
+
+/** 创建知识库请求 */
+export interface CreateKbRequest {
+  name: string
+}

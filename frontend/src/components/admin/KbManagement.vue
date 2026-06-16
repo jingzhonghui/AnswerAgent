@@ -1,0 +1,1029 @@
+<script setup lang="ts">
+import { ref, onMounted, computed } from 'vue'
+import {
+  getKbList,
+  getKbFiles,
+  createKnowledgeBase,
+  uploadKbZip,
+  deleteKnowledgeBase,
+  uploadKbFile,
+  deleteKbFile,
+} from '@/api'
+import type { KbSummary, KbFileInfo } from '@/types'
+
+// ============================================================
+// Toast 消息
+// ============================================================
+
+interface Toast {
+  id: number
+  type: 'success' | 'error'
+  message: string
+}
+
+let toastId = 0
+const toasts = ref<Toast[]>([])
+
+function showToast(type: 'success' | 'error', message: string) {
+  const id = ++toastId
+  toasts.value.push({ id, type, message })
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }, 3000)
+}
+
+// ============================================================
+// 状态
+// ============================================================
+
+const knowledgeBases = ref<KbSummary[]>([])
+const selectedKb = ref<string | null>(null)
+const currentPath = ref('')
+const kbItems = ref<KbFileInfo[]>([])
+const isLoadingFiles = ref(false)
+
+// 弹窗
+const showCreateModal = ref(false)
+const showUploadZipModal = ref(false)
+const showUploadFileModal = ref(false)
+const showDeleteKbConfirm = ref<string | null>(null)
+const showDeleteConfirm = ref<{ relPath: string; name: string; isDir: boolean } | null>(null)
+
+// 表单
+const newKbName = ref('')
+const uploadZipFile = ref<File | null>(null)
+const uploadZipName = ref('')
+const uploadKbFileTarget = ref<File | null>(null)
+
+// ============================================================
+// 面包屑
+// ============================================================
+
+const breadcrumbs = computed(() => {
+  if (!currentPath.value) return []
+  const parts = currentPath.value.split('/')
+  return parts.map((part, index) => ({
+    name: part,
+    path: parts.slice(0, index + 1).join('/'),
+  }))
+})
+
+// ============================================================
+// 方法
+// ============================================================
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function formatTime(iso: string | null): string {
+  if (!iso) return '-'
+  return new Date(iso).toLocaleString()
+}
+
+async function loadList() {
+  try {
+    const res = await getKbList()
+    knowledgeBases.value = res.knowledge_bases
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '加载知识库列表失败')
+  }
+}
+
+async function selectKb(name: string) {
+  selectedKb.value = name
+  currentPath.value = ''
+  kbItems.value = []
+  await loadDir('')
+}
+
+async function loadDir(subPath: string) {
+  if (!selectedKb.value) return
+  isLoadingFiles.value = true
+  try {
+    const res = await getKbFiles(selectedKb.value, subPath || undefined)
+    kbItems.value = res.items
+    currentPath.value = res.current_path
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '加载文件列表失败')
+  } finally {
+    isLoadingFiles.value = false
+  }
+}
+
+/** 双击进入目录 */
+function enterDir(item: KbFileInfo) {
+  if (!item.is_dir) return
+  loadDir(item.rel_path)
+}
+
+/** 返回根目录 */
+function goToRoot() {
+  loadDir('')
+}
+
+function goToBreadcrumb(subPath: string) {
+  loadDir(subPath)
+}
+
+async function handleCreate() {
+  if (!newKbName.value.trim()) {
+    showToast('error', '请输入知识库名称')
+    return
+  }
+  try {
+    await createKnowledgeBase({ name: newKbName.value.trim() })
+    showToast('success', `知识库 "${newKbName.value.trim()}" 已创建`)
+    showCreateModal.value = false
+    newKbName.value = ''
+    await loadList()
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '创建失败')
+  }
+}
+
+async function handleUploadZip() {
+  if (!uploadZipFile.value) {
+    showToast('error', '请选择 ZIP 文件')
+    return
+  }
+  try {
+    const res = await uploadKbZip(uploadZipFile.value, uploadZipName.value.trim() || undefined)
+    showToast('success', `知识库 "${res.name}" 已从 ZIP 创建（${res.file_count} 个文件）`)
+    showUploadZipModal.value = false
+    uploadZipFile.value = null
+    uploadZipName.value = ''
+    await loadList()
+    selectedKb.value = res.name
+    currentPath.value = ''
+    await loadDir('')
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '上传 ZIP 失败')
+  }
+}
+
+async function handleDeleteKb(name: string) {
+  try {
+    await deleteKnowledgeBase(name)
+    showToast('success', `知识库 "${name}" 已删除`)
+    showDeleteKbConfirm.value = null
+    if (selectedKb.value === name) {
+      selectedKb.value = null
+      currentPath.value = ''
+      kbItems.value = []
+    }
+    await loadList()
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '删除失败')
+  }
+}
+
+async function handleUploadFile() {
+  if (!uploadKbFileTarget.value || !selectedKb.value) {
+    showToast('error', '请选择文件')
+    return
+  }
+  try {
+    const res = await uploadKbFile(
+      selectedKb.value,
+      uploadKbFileTarget.value,
+      currentPath.value || undefined,
+    )
+    showToast('success', `文件 "${res.file_name}" 已上传`)
+    showUploadFileModal.value = false
+    uploadKbFileTarget.value = null
+    await loadDir(currentPath.value)
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '上传文件失败')
+  }
+}
+
+async function handleDeleteItem(item: KbFileInfo) {
+  if (!selectedKb.value) return
+  try {
+    await deleteKbFile(selectedKb.value, item.rel_path)
+    showToast('success', `${item.is_dir ? '目录' : '文件'} "${item.name}" 已删除`)
+    showDeleteConfirm.value = null
+    await loadDir(currentPath.value)
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '删除失败')
+  }
+}
+
+function onZipFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  uploadZipFile.value = input.files?.[0] || null
+}
+
+function onKbFileChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  uploadKbFileTarget.value = input.files?.[0] || null
+}
+
+// ============================================================
+// 初始化
+// ============================================================
+
+onMounted(() => {
+  loadList()
+})
+</script>
+
+<template>
+  <div class="kb-management">
+    <div class="kb-layout">
+      <!-- 左侧：知识库列表 -->
+      <aside class="kb-sidebar">
+        <h3 class="kb-sidebar-title">知识库列表</h3>
+
+        <div class="kb-list">
+          <div v-if="knowledgeBases.length === 0" class="kb-empty">
+            暂无知识库
+          </div>
+          <button
+            v-for="kb in knowledgeBases"
+            :key="kb.name"
+            class="kb-item"
+            :class="{ active: selectedKb === kb.name }"
+            @click="selectKb(kb.name)"
+          >
+            <div class="kb-item-header">
+              <span class="kb-item-name">📁 {{ kb.name }}</span>
+              <button
+                class="kb-item-delete"
+                title="删除知识库"
+                @click.stop="showDeleteKbConfirm = kb.name"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="3 6 5 6 21 6" />
+                  <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                  <path d="M10 11v6" />
+                  <path d="M14 11v6" />
+                  <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                </svg>
+              </button>
+            </div>
+            <div class="kb-item-meta">
+              <span>{{ kb.file_count }} 个文件</span>
+              <span v-if="kb.last_modified" class="kb-item-time">
+                {{ formatTime(kb.last_modified) }}
+              </span>
+            </div>
+          </button>
+        </div>
+
+        <div class="kb-sidebar-actions">
+          <button class="btn btn-primary" @click="showCreateModal = true">
+            🎲 新建知识库
+          </button>
+          <button class="btn btn-secondary" @click="showUploadZipModal = true">
+            📦 上传 ZIP
+          </button>
+        </div>
+      </aside>
+
+      <!-- 右侧：文件浏览器 -->
+      <main class="kb-main">
+        <!-- 未选中知识库 -->
+        <div v-if="!selectedKb" class="kb-placeholder">
+          <div class="kb-placeholder-icon">📂</div>
+          <p>选择一个知识库查看文件</p>
+        </div>
+
+        <!-- 文件浏览器 -->
+        <template v-else>
+          <div class="kb-main-header">
+            <h3>📁 {{ selectedKb }}</h3>
+            <button class="btn btn-accent" @click="showUploadFileModal = true">
+              ⬆️ 上传文件到当前目录
+            </button>
+          </div>
+
+          <!-- 面包屑导航 -->
+          <div class="breadcrumb-bar">
+            <button class="breadcrumb-link" @click="goToRoot()">📁 {{ selectedKb }}</button>
+            <template v-for="(crumb, idx) in breadcrumbs" :key="crumb.path">
+              <span class="breadcrumb-sep">/</span>
+              <button
+                v-if="idx < breadcrumbs.length - 1"
+                class="breadcrumb-link"
+                @click="goToBreadcrumb(crumb.path)"
+              >
+                {{ crumb.name }}
+              </button>
+              <span v-else class="breadcrumb-current">{{ crumb.name }}</span>
+            </template>
+          </div>
+
+          <!-- 加载中 -->
+          <div v-if="isLoadingFiles" class="kb-loading">加载中…</div>
+
+          <!-- 空目录 -->
+          <div v-else-if="kbItems.length === 0" class="kb-placeholder">
+            <div class="kb-placeholder-icon">📭</div>
+            <p>当前目录为空</p>
+          </div>
+
+          <!-- 文件/目录表格 -->
+          <table v-else class="kb-file-table">
+            <thead>
+              <tr>
+                <th>名称</th>
+                <th>大小</th>
+                <th>修改时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr
+                v-for="item in kbItems"
+                :key="item.rel_path"
+                :class="{ 'row-dir': item.is_dir }"
+                @dblclick="enterDir(item)"
+              >
+                <td class="item-name">
+                  <span class="item-icon">{{ item.is_dir ? '📁' : '📄' }}</span>
+                  <span class="item-name-text">{{ item.name }}</span>
+                </td>
+                <td class="item-size">
+                  {{ item.is_dir ? '-' : formatSize(item.size) }}
+                </td>
+                <td class="item-time">{{ formatTime(item.modified) }}</td>
+                <td class="item-action">
+                  <button
+                    class="btn-delete"
+                    :title="`删除${item.is_dir ? '目录' : '文件'}`"
+                    @click="showDeleteConfirm = {
+                      relPath: item.rel_path,
+                      name: item.name,
+                      isDir: item.is_dir,
+                    }"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                    </svg>
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </template>
+      </main>
+
+      <!-- ============================================================ -->
+      <!-- 弹窗：新建知识库 -->
+      <!-- ============================================================ -->
+      <div v-if="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false">
+        <div class="modal-card">
+          <h4>🎲 新建知识库</h4>
+          <label class="form-label">知识库名称</label>
+          <input
+            v-model="newKbName"
+            class="form-input"
+            placeholder="输入知识库名称"
+            @keyup.enter="handleCreate"
+          />
+          <div class="modal-actions">
+            <button class="btn btn-secondary" @click="showCreateModal = false">取消</button>
+            <button class="btn btn-primary" @click="handleCreate">创建</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 弹窗：上传 ZIP -->
+      <!-- ============================================================ -->
+      <div v-if="showUploadZipModal" class="modal-overlay" @click.self="showUploadZipModal = false">
+        <div class="modal-card">
+          <h4>📦 上传 ZIP 创建知识库</h4>
+          <label class="form-label">选择 ZIP 文件</label>
+          <input type="file" accept=".zip" class="form-input" @change="onZipFileChange" />
+          <label class="form-label">知识库名称（可选，默认使用文件名）</label>
+          <input
+            v-model="uploadZipName"
+            class="form-input"
+            placeholder="留空则使用 ZIP 文件名"
+          />
+          <div class="modal-actions">
+            <button class="btn btn-secondary" @click="showUploadZipModal = false">取消</button>
+            <button class="btn btn-primary" :disabled="!uploadZipFile" @click="handleUploadZip">
+              上传并解压
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 弹窗：上传文件到当前目录 -->
+      <!-- ============================================================ -->
+      <div v-if="showUploadFileModal" class="modal-overlay" @click.self="showUploadFileModal = false">
+        <div class="modal-card">
+          <h4>⬆️ 上传文件到 "{{ selectedKb }}"</h4>
+          <p v-if="currentPath" class="upload-path-hint">📂 {{ currentPath }}</p>
+          <p v-else class="upload-path-hint">📂 根目录</p>
+          <label class="form-label">选择文件</label>
+          <input type="file" class="form-input" @change="onKbFileChange" />
+          <div class="modal-actions">
+            <button class="btn btn-secondary" @click="showUploadFileModal = false">取消</button>
+            <button class="btn btn-primary" :disabled="!uploadKbFileTarget" @click="handleUploadFile">
+              上传
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 弹窗：删除知识库确认 -->
+      <!-- ============================================================ -->
+      <div v-if="showDeleteKbConfirm" class="modal-overlay" @click.self="showDeleteKbConfirm = null">
+        <div class="modal-card modal-card-sm">
+          <h4>⚠️ 确认删除</h4>
+          <p>确定要删除知识库 "<strong>{{ showDeleteKbConfirm }}</strong>" 吗？此操作不可恢复。</p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" @click="showDeleteKbConfirm = null">取消</button>
+            <button class="btn btn-danger" @click="handleDeleteKb(showDeleteKbConfirm!)">确认删除</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================ -->
+      <!-- 弹窗：删除文件/目录确认 -->
+      <!-- ============================================================ -->
+      <div v-if="showDeleteConfirm" class="modal-overlay" @click.self="showDeleteConfirm = null">
+        <div class="modal-card modal-card-sm">
+          <h4>⚠️ 确认删除{{ showDeleteConfirm.isDir ? '目录' : '文件' }}</h4>
+          <p>
+            确定要删除{{ showDeleteConfirm.isDir ? '目录' : '文件' }}
+            "<strong>{{ showDeleteConfirm.name }}</strong>" 吗？
+            <template v-if="showDeleteConfirm.isDir">目录内所有文件将一并删除。</template>
+          </p>
+          <div class="modal-actions">
+            <button class="btn btn-secondary" @click="showDeleteConfirm = null">取消</button>
+            <button class="btn btn-danger" @click="handleDeleteItem({
+              name: showDeleteConfirm.name,
+              rel_path: showDeleteConfirm.relPath,
+              is_dir: showDeleteConfirm.isDir,
+            } as KbFileInfo)">确认删除</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================ -->
+    <!-- Toast 消息 -->
+    <!-- ============================================================ -->
+    <div class="toast-container">
+      <transition-group name="toast">
+        <div
+          v-for="toast in toasts"
+          :key="toast.id"
+          class="toast-item"
+          :class="'toast-' + toast.type"
+        >
+          <span class="toast-icon">{{ toast.type === 'success' ? '✅' : '❌' }}</span>
+          <span class="toast-msg">{{ toast.message }}</span>
+        </div>
+      </transition-group>
+    </div>
+  </div>
+</template>
+
+<style scoped>
+/* ============================================================
+   外层容器 — 匹配 KbWorkflow 的 height: 100% 模式
+   ============================================================ */
+.kb-management {
+  height: 100%;
+}
+
+.kb-layout {
+  display: flex;
+  gap: 24px;
+  height: 100%;
+}
+
+/* ============================================================
+   左侧边栏 — 匹配 KbWorkflow 侧边栏样式
+   ============================================================ */
+.kb-sidebar {
+  width: 260px;
+  min-width: 260px;
+  border-right: 1px solid var(--border-color);
+  padding-right: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.kb-sidebar-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 12px;
+}
+
+.kb-list {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.kb-empty {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 24px 0;
+  font-size: 13px;
+}
+
+.kb-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  color: var(--text-primary);
+}
+
+.kb-item:hover {
+  background: var(--bg-primary);
+}
+
+.kb-item.active {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.kb-item.active .kb-item-meta {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.kb-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.kb-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+}
+
+.kb-item-delete {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: #e74c3c;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  display: flex;
+  align-items: center;
+  transition: opacity 0.15s, background 0.15s;
+}
+
+.kb-item:hover .kb-item-delete {
+  opacity: 1;
+}
+
+.kb-item.active .kb-item-delete {
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.kb-item-delete:hover {
+  background: rgba(231, 76, 60, 0.15);
+}
+
+.kb-item.active .kb-item-delete:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.kb-item-meta {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.kb-sidebar-actions {
+  padding-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border-top: 1px solid var(--border-color);
+}
+
+/* ============================================================
+   右侧主区域
+   ============================================================ */
+.kb-main {
+  flex: 1;
+  overflow-y: auto;
+  min-width: 0;
+}
+
+.kb-main-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.kb-main-header h3 {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text-primary);
+}
+
+.kb-placeholder {
+  text-align: center;
+  padding: 64px 20px;
+  color: var(--text-secondary);
+}
+
+.kb-placeholder-icon {
+  font-size: 48px;
+  margin-bottom: 12px;
+}
+
+.kb-loading {
+  text-align: center;
+  color: var(--text-secondary);
+  padding: 32px 0;
+}
+
+/* ============================================================
+   面包屑
+   ============================================================ */
+.breadcrumb-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.breadcrumb-link {
+  background: none;
+  border: none;
+  color: var(--accent-color);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: background 0.15s;
+}
+
+.breadcrumb-link:hover {
+  background: var(--bg-primary);
+  text-decoration: underline;
+}
+
+.breadcrumb-sep {
+  color: var(--text-secondary);
+  opacity: 0.5;
+}
+
+.breadcrumb-current {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* ============================================================
+   文件/目录表格
+   ============================================================ */
+.kb-file-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.kb-file-table th {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 2px solid var(--border-color);
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.kb-file-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+
+.kb-file-table tr:hover td {
+  background: var(--bg-sidebar);
+}
+
+.row-dir {
+  cursor: pointer;
+}
+
+.row-dir .item-name-text {
+  color: var(--accent-color);
+}
+
+.item-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 350px;
+}
+
+.item-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.item-name-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-size {
+  white-space: nowrap;
+  color: var(--text-secondary) !important;
+}
+
+.item-time {
+  white-space: nowrap;
+  color: var(--text-secondary) !important;
+  font-size: 12px;
+}
+
+.item-action {
+  text-align: center;
+}
+
+/* ============================================================
+   上传路径提示
+   ============================================================ */
+.upload-path-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 4px 0 12px;
+  padding: 6px 10px;
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-sm);
+}
+
+/* ============================================================
+   按钮
+   ============================================================ */
+.btn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background 0.15s, opacity 0.15s;
+}
+
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-primary {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-secondary {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+
+.btn-accent {
+  background: var(--accent-color);
+  color: #fff;
+}
+
+.btn-accent:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+
+.btn-danger {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: #c0392b;
+}
+
+.btn-delete {
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: #e74c3c;
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-delete:hover {
+  background: rgba(231, 76, 60, 0.1);
+  border-color: rgba(231, 76, 60, 0.3);
+}
+
+/* ============================================================
+   弹窗
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal-card {
+  background: var(--bg-primary);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+  width: 400px;
+  max-width: 90vw;
+  box-shadow: var(--shadow-lg);
+}
+
+.modal-card-sm {
+  width: 360px;
+}
+
+.modal-card h4 {
+  margin: 0 0 16px;
+  font-size: 15px;
+  color: var(--text-primary);
+}
+
+.modal-card p {
+  margin: 0 0 16px;
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.form-label {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  margin-top: 12px;
+}
+
+.form-label:first-of-type {
+  margin-top: 0;
+}
+
+.form-input {
+  width: 100%;
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  box-sizing: border-box;
+}
+
+.form-input:focus {
+  outline: none;
+  border-color: var(--accent-color);
+  box-shadow: 0 0 0 2px rgba(78, 110, 242, 0.15);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+/* ============================================================
+   Toast 消息
+   ============================================================ */
+.toast-container {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  z-index: 200;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  pointer-events: auto;
+  max-width: 380px;
+}
+
+.toast-success {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+
+.toast-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+
+[data-theme="dark"] .toast-success {
+  background: #064e3b;
+  color: #a7f3d0;
+  border-color: #065f46;
+}
+
+[data-theme="dark"] .toast-error {
+  background: #7f1d1d;
+  color: #fecaca;
+  border-color: #991b1b;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  font-size: 14px;
+}
+
+.toast-msg {
+  line-height: 1.4;
+}
+
+/* Toast 动画 */
+.toast-enter-active {
+  transition: all 0.3s ease-out;
+}
+
+.toast-leave-active {
+  transition: all 0.25s ease-in;
+}
+
+.toast-enter-from {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+.toast-leave-to {
+  opacity: 0;
+  transform: translateX(40px);
+}
+
+/* ============================================================
+   暗色模式
+   ============================================================ */
+[data-theme="dark"] .kb-file-table tr:hover td {
+  background: var(--bg-sidebar);
+}
+
+[data-theme="dark"] .breadcrumb-bar {
+  background: var(--bg-sidebar);
+}
+</style>
