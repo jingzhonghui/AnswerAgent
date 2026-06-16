@@ -29,7 +29,7 @@ from core.chat_manager import (
 )
 from core.config import settings
 from core.deps import get_current_user
-from core.kb_router import route_knowledge_bases
+from core.kb_router import route_knowledge_bases, KBRouterError
 from core.file_loader import select_and_load_files, LoadedFile
 from core.agent_builder import (
     build_simple_agent,
@@ -272,9 +272,26 @@ async def _stream_events(
                 ),
             }
             return
+        except KBRouterError as e:
+            logger.warning("KB routing failed: %s", e)
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {"message": "知识库路由失败，请稍后重试。"},
+                    ensure_ascii=False,
+                ),
+            }
+            return
         except Exception as e:
-            logger.exception("KB routing failed")
-            kb_names = []
+            logger.exception("KB routing unexpected error")
+            yield {
+                "event": "error",
+                "data": json.dumps(
+                    {"message": "知识库路由失败，请稍后重试。"},
+                    ensure_ascii=False,
+                ),
+            }
+            return
 
         yield {
             "event": "kb_matched",
@@ -311,7 +328,25 @@ async def _stream_events(
             conversation_id, window=settings.history_window
         )
         formatted_history = format_history(history)
-        agent_messages = formatted_history + [HumanMessage(content=message)]
+
+        # 知识库已匹配但没有找到相关文件时，先向用户发出提示，再继续通用回答
+        kb_fallback = kb_names and not all_loaded and mode != "deep"
+        if kb_fallback:
+            kb_list = "、".join(kb_names)
+            notice = f"> 知识库「{kb_list}」中未检索到与该问题相关的内容，以下回答基于模型的训练知识。\n\n"
+            full_response += notice
+            yield {
+                "event": "token",
+                "data": json.dumps({"content": notice}, ensure_ascii=False),
+            }
+            # 向 LLM 注入说明，避免其误以为有搜索工具可用
+            user_msg = HumanMessage(
+                content=f"[说明：知识库检索无匹配，请直接基于训练知识回答]\n\n{message}"
+            )
+        else:
+            user_msg = HumanMessage(content=message)
+
+        agent_messages = formatted_history + [user_msg]
 
         if mode == "deep":
             agent = build_deep_agent(streaming=True, reasoning=True)

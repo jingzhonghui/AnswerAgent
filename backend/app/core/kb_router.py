@@ -12,7 +12,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
+import time
 from pathlib import Path
 from typing import List, Optional
 
@@ -20,6 +22,13 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 from core.config import settings
 from core.llm_factory import create_chat_llm
+
+logger = logging.getLogger("app.core.kb_router")
+
+# 瞬时错误重试配置
+_RETRY_COUNT = 2
+_RETRY_DELAY = 1.0  # 秒
+_TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 # 单个知识库 索引.md 注入路由 prompt 的字符上限，避免大目录撑爆 token
@@ -185,13 +194,30 @@ def route_knowledge_bases(
     )
 
     llm = create_chat_llm(streaming=False, temperature=0.0)
-    try:
-        response = llm.invoke([
-            SystemMessage(content=_ROUTER_SYSTEM_PROMPT),
-            HumanMessage(content=user_prompt),
-        ])
-    except Exception as e:  # 网络/鉴权等运行时错误
-        raise KBRouterError(f"LLM routing failed: {e}") from e
+    messages = [
+        SystemMessage(content=_ROUTER_SYSTEM_PROMPT),
+        HumanMessage(content=user_prompt),
+    ]
+    last_exc: Exception | None = None
+    for attempt in range(_RETRY_COUNT + 1):
+        try:
+            response = llm.invoke(messages)
+            break
+        except Exception as e:
+            last_exc = e
+            # 判断是否为瞬时错误（从异常消息中提取状态码）
+            e_str = str(e)
+            is_transient = any(f"Error code: {code}" in e_str for code in _TRANSIENT_STATUS_CODES)
+            if is_transient and attempt < _RETRY_COUNT:
+                logger.warning(
+                    "KB routing transient error (attempt %d/%d): %s",
+                    attempt + 1, _RETRY_COUNT + 1, e,
+                )
+                time.sleep(_RETRY_DELAY)
+                continue
+            raise KBRouterError(f"LLM routing failed: {e}") from e
+    else:
+        raise KBRouterError(f"LLM routing failed after {_RETRY_COUNT + 1} attempts: {last_exc}") from last_exc
 
     raw = response.content if hasattr(response, "content") else str(response)
     if isinstance(raw, list):

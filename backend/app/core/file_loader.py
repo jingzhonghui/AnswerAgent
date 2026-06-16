@@ -1,11 +1,10 @@
-"""文件选取模块（两阶段：本地粗筛 + LLM 精读）
+"""文件选取模块（四步检索：优先文件 → 索引指引 → 关键词粗筛+LLM精选 → 返回空兜底）
 
 针对单个匹配到的知识库:
-1. 扫描知识库内所有支持类型的文件，建立 (文件路径, 元数据) 候选池。
-2. 对用户问题做中英文分词，按文件名/标题/索引.md/路径关键词命中数评分，
-   取 Top _ROUGH_LIMIT 作为候选。
-3. 将候选文件的"简要目录"喂给 LLM，让 LLM 选出 ≤ _FINE_LIMIT 个最相关文件。
-4. 读取选中文件完整内容（带单文件字符上限），按知识库内相对路径返回。
+1. 无条件加载 索引.md / index.md / overview.md（如存在），作为知识库入口。
+2. 从索引文件中提取 Markdown 链接，取与问题 token 有交集的行对应的文件。
+3. 对剩余候选做关键词粗筛，再经 LLM 精选最多 _FINE_LIMIT 个文件。
+4. 若前三步均无结果，返回空列表，由调用方降级为通用回答。
 
 安全:
 - 所有路径 resolve 后必须落在知识库根目录内，否则抛 PathSecurityError。
@@ -44,6 +43,9 @@ _FINE_LIMIT = 5              # LLM 精读最多选 5
 _SINGLE_FILE_CHAR_LIMIT = 20_000      # 单文件读入上限
 _PER_KB_TOTAL_CHAR_LIMIT = 60_000     # 单知识库总字符上限
 _FILE_SCAN_LIMIT = 500       # 单知识库最多扫描 500 个候选文件
+
+# 优先加载的入口文件名（按优先级顺序）
+_PRIORITY_NAMES = ("索引.md", "index.md", "overview.md")
 
 # 路由 + 路径 + 标题预览的字符上限
 _TITLE_PREVIEW_LIMIT = 300
@@ -274,6 +276,41 @@ def _score_candidates(
     return scored[:_ROUGH_LIMIT]
 
 
+_MD_LINK_RE = re.compile(r'\[([^\]]*)\]\(([^)#\s]+)\)')
+
+
+def _extract_index_links(
+    index_content: str,
+    question_tokens: Set[str],
+    kb_root: Path,
+) -> List[str]:
+    """从索引文件内容中提取与问题相关的文件链接。
+
+    逐行扫描，若某行的 token 与问题 token 有交集，则提取该行所有
+    Markdown 链接对应的文件路径，经安全校验后返回。
+    """
+    results: List[str] = []
+    seen: Set[str] = set()
+
+    for line in index_content.splitlines():
+        line_tokens = _tokenize(line)
+        if not (question_tokens & line_tokens):
+            continue
+        for m in _MD_LINK_RE.finditer(line):
+            raw = m.group(2).replace("\\", "/").strip().lstrip("./")
+            if not raw or raw in seen:
+                continue
+            try:
+                _safe_resolve_in_kb(kb_root, kb_root / raw)
+            except PathSecurityError:
+                continue
+            if (kb_root / raw).is_file():
+                results.append(raw)
+                seen.add(raw)
+
+    return results
+
+
 _FILE_SELECT_SYSTEM_PROMPT = (
     "你是一个文档检索助手。\n"
     "用户会给出一个问题，以及若干候选文件（文件路径 + 标题）。\n"
@@ -385,70 +422,77 @@ def select_and_load_files(
     kb_name: str,
     knowledge_root: Optional[Path] = None,
 ) -> List[LoadedFile]:
-    """对单个知识库执行两阶段文件选取并加载内容
+    """对单个知识库执行四步文件检索并加载内容
 
-    Args:
-        question: 用户问题
-        kb_name: 知识库名（一级目录名）
-        knowledge_root: 可选覆盖根目录
+    步骤:
+      1. 加载 索引.md / index.md / overview.md（存在即加载，作为入口）
+      2. 从索引文件中提取与问题 token 相关的 Markdown 链接文件
+      3. 对剩余候选做关键词粗筛 + LLM 精选
+      4. 若前三步均无结果，返回 []，调用方降级为通用回答
 
-    Returns:
-        List[LoadedFile]: 选中并读取成功的文件列表，最多 _FINE_LIMIT 个，
-                          总字符数受 _PER_KB_TOTAL_CHAR_LIMIT 限制。
-                          无候选或全部读取失败时返回 []。
+    总字符受 _PER_KB_TOTAL_CHAR_LIMIT 限制，单文件受 _SINGLE_FILE_CHAR_LIMIT 限制。
 
     Raises:
         PathSecurityError: kb_name 解析后逃出知识库根目录
-        LLMConfigError / KBRouterError 透传
+        LLMConfigError 透传
     """
     root = (knowledge_root or settings.get_knowledge_path()).resolve()
     kb_root = _safe_resolve_in_kb(root, root / kb_name)
     if not kb_root.is_dir():
         return []
 
-    # Step 1: 候选池
-    candidates = _build_candidates(kb_root)
-    if not candidates:
-        return []
-
-    # Step 2: 关键词粗筛
     question_tokens = _tokenize(question)
-    index_text = _read_index_md(kb_root)
-    # 即使 question_tokens 为空，也用索引/文件名做兜底（取按文件名字母序的前 N）
-    if not question_tokens:
-        rough = sorted(candidates, key=lambda c: c.rel_path)[:_ROUGH_LIMIT]
-    else:
-        rough = _score_candidates(candidates, question_tokens, index_text)
-        # 粗筛 0 命中时仍给 LLM 一些默认候选，避免直接放弃
-        if not rough:
-            rough = sorted(candidates, key=lambda c: c.rel_path)[:_ROUGH_LIMIT]
-
-    # Step 3: LLM 精选
-    selected_paths = _llm_select_files(question, rough)
-    if not selected_paths:
-        return []
-
-    # Step 4: 读取内容（受单文件 / 单知识库总量限制）
-    loaded: List[LoadedFile] = []
+    loaded_map: Dict[str, LoadedFile] = {}
     used_chars = 0
-    for rel in selected_paths:
-        content = _read_file_safely(kb_root, rel)
-        if content is None:
-            continue
-        truncated = len(content) >= _SINGLE_FILE_CHAR_LIMIT
-        # 单知识库总量预算
+
+    def _try_add(rel: str) -> bool:
+        """尝试将 rel 对应的文件加入 loaded_map，受总量预算限制。"""
+        nonlocal used_chars
+        if rel in loaded_map:
+            return True
         remaining = _PER_KB_TOTAL_CHAR_LIMIT - used_chars
         if remaining <= 0:
-            break
-        if len(content) > remaining:
+            return False
+        content = _read_file_safely(kb_root, rel)
+        if not content:
+            return False
+        orig_len = len(content)
+        if orig_len > remaining:
             content = content[:remaining]
-            truncated = True
-        loaded.append(LoadedFile(
-            kb_name=kb_name,
-            rel_path=rel,
-            content=content,
-            truncated=truncated,
-        ))
+        truncated = orig_len >= _SINGLE_FILE_CHAR_LIMIT or orig_len > remaining
+        loaded_map[rel] = LoadedFile(
+            kb_name=kb_name, rel_path=rel, content=content, truncated=truncated
+        )
         used_chars += len(content)
+        return True
 
-    return loaded
+    # ── Step 1: 优先入口文件 ────────────────────────────────────────────
+    for fname in _PRIORITY_NAMES:
+        if (kb_root / fname).is_file():
+            _try_add(fname)
+
+    # ── Step 2: 索引指引链接 ────────────────────────────────────────────
+    if question_tokens and used_chars < _PER_KB_TOTAL_CHAR_LIMIT:
+        for fname in ("索引.md", "index.md"):
+            if fname in loaded_map:
+                for rel in _extract_index_links(loaded_map[fname].content, question_tokens, kb_root):
+                    if not _try_add(rel):
+                        break
+
+    # ── Step 3: 关键词粗筛 + LLM 精选 ──────────────────────────────────
+    if question_tokens and used_chars < _PER_KB_TOTAL_CHAR_LIMIT:
+        candidates = _build_candidates(kb_root)
+        remaining_cands = [c for c in candidates if c.rel_path not in loaded_map]
+        if remaining_cands:
+            index_text = next(
+                (loaded_map[f].content for f in ("索引.md", "index.md") if f in loaded_map),
+                "",
+            )
+            rough = _score_candidates(remaining_cands, question_tokens, index_text)
+            if rough:
+                for rel in _llm_select_files(question, rough):
+                    if not _try_add(rel):
+                        break
+
+    return list(loaded_map.values())
+
