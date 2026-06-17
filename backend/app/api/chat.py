@@ -329,6 +329,9 @@ async def _stream_events(
         history = chat_manager.get_recent_history(
             conversation_id, window=settings.history_window
         )
+        # 排除当前用户消息（已提前写入持久化，避免与下方 user_msg 重复）
+        if history and history[-1].get("role") == "user":
+            history.pop()
         formatted_history = format_history(history)
 
         # ── 上下文预算检查 ──

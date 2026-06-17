@@ -30,6 +30,7 @@ def create_chat_llm(
     temperature: float = 0.2,
     model: Optional[str] = None,
     reasoning: bool = False,
+    tool_choice: Optional[str] = None,
 ):
     """创建 LangChain Chat Model 实例
 
@@ -38,6 +39,7 @@ def create_chat_llm(
         temperature: 采样温度
         model: 覆盖默认 model 名称
         reasoning: 是否使用深度思考（推理）模型；为 True 时使用 deep_* 配置
+        tool_choice: 工具调用策略，\"none\" 禁止模型发起工具调用
 
     Returns:
         BaseChatModel: LangChain chat model 实例
@@ -73,13 +75,17 @@ def create_chat_llm(
                 "API_KEY is not configured for OpenAI provider. "
                 "Please set API_KEY (or DEEP_API_KEY for deep mode) in admin panel"
             )
-        return ChatOpenAI(
-            api_key=api_key,
-            base_url=base_url or None,
-            model=model_name,
-            temperature=temp,
-            streaming=streaming,
-        )
+        # 构建 ChatOpenAI 参数
+        openai_kwargs: dict = {
+            "api_key": api_key,
+            "base_url": base_url or None,
+            "model": model_name,
+            "temperature": temp,
+            "streaming": streaming,
+        }
+        if tool_choice is not None:
+            openai_kwargs["model_kwargs"] = {"tool_choice": tool_choice}
+        return ChatOpenAI(**openai_kwargs)
 
     if provider == "anthropic":
         if not api_key or api_key.startswith("sk-ant-xxx"):

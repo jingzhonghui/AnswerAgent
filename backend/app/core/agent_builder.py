@@ -137,6 +137,8 @@ def build_simple_agent(
     替代 build_general_chain()。
     使用 DeepAgents 但不注入任何工具——等效于纯 LLM 对话。
 
+    tool_choice="none" + subagents=False 确保 Agent 不会发起工具调用。
+
     Args:
         streaming: 是否启用流式输出
         model: 可选覆盖 LLM 实例
@@ -144,14 +146,14 @@ def build_simple_agent(
     Returns:
         DeepAgent: 可调用 agent.ainvoke({"messages": [...]})
     """
-    llm = model or create_chat_llm(streaming=streaming, temperature=0.3)
+    llm = model or create_chat_llm(streaming=streaming, temperature=0.3, tool_choice="none")
 
     agent = create_deep_agent(
         model=llm,
         system_prompt=_with_identity(GENERAL_SYSTEM_TEMPLATE),
         tools=[],
         middleware=[],
-        skills=get_skill_sources(),
+        subagents=False,
     )
     return agent
 
@@ -167,6 +169,8 @@ def build_kb_agent(
     将知识库文件内容直接注入 system_prompt，让 LLM 基于上下文回答。
     这是最高效的方式——不需要工具调用开销。
 
+    tool_choice="none" + subagents=False 确保 Agent 不会发起工具调用。
+
     Args:
         context: 合并后的知识库上下文（所有选中文件内容拼接）
         streaming: 是否启用流式输出
@@ -175,7 +179,7 @@ def build_kb_agent(
     Returns:
         DeepAgent: 可调用 agent.ainvoke({"messages": [...]})
     """
-    llm = model or create_chat_llm(streaming=streaming, temperature=0.3)
+    llm = model or create_chat_llm(streaming=streaming, temperature=0.3, tool_choice="none")
     system_prompt = _with_identity(KB_SYSTEM_TEMPLATE.format(context=context))
 
     agent = create_deep_agent(
@@ -183,7 +187,7 @@ def build_kb_agent(
         system_prompt=system_prompt,
         tools=[],
         middleware=[],
-        skills=get_skill_sources(),
+        subagents=False,
     )
     return agent
 
