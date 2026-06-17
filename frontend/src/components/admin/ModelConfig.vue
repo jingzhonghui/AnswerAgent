@@ -29,7 +29,7 @@ function getInputType(key: string): string {
   if (!sensitiveKeys.has(key)) return 'text'
   return visibleKeys.value.has(key) ? 'text' : 'password'
 }
-const systemConfigKeys = new Set(['history_window', 'knowledge_path', 'data_path', 'jwt_algorithm', 'jwt_expire_minutes'])
+const systemConfigKeys = new Set(['history_window', 'max_context_chars', 'knowledge_path', 'data_path', 'jwt_algorithm', 'jwt_expire_minutes'])
 
 // LLM 默认模型配置键（不含 deep_ 前缀）
 const llmConfigKeys = new Set(['llm_provider', 'api_key', 'base_url', 'model', 'temperature'])
@@ -294,6 +294,21 @@ function showMessage(msg: string, type: 'success' | 'error') {
               max="50"
               class="form-input"
             />
+            <div
+              v-else-if="cfg.key === 'max_context_chars'"
+              class="unit-input-wrapper"
+            >
+              <input
+                :id="cfg.key"
+                v-model.number="cfg.value"
+                type="number"
+                min="0"
+                max="1000"
+                step="5"
+                class="form-input unit-input"
+              />
+              <span class="unit-label">K</span>
+            </div>
             <input
               v-else
               :id="cfg.key"
@@ -583,6 +598,31 @@ function showMessage(msg: string, type: 'success' | 'error') {
 .toggle-password svg {
   width: 16px;
   height: 16px;
+}
+
+.unit-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.unit-input-wrapper .unit-input {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  flex: 1;
+}
+
+.unit-label {
+  display: flex;
+  align-items: center;
+  padding: 7px 12px;
+  background: var(--bg-active);
+  border: 1px solid var(--border-color);
+  border-left: none;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
 }
 
 .restart-badge {

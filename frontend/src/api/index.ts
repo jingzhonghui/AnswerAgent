@@ -105,6 +105,8 @@ export interface StreamChatHandlers {
   onToken: (content: string) => void
   onDone: (messageId: string, title?: string) => void
   onError: (message: string) => void
+  /** 上下文预算裁剪通知 */
+  onContextTrimmed?: (data: { trimmed_history_rounds: number; trimmed_context_chars: number; char_used: number; char_budget: number }) => void
   /** 深度思考：Agent 推理/行动决策 */
   onAgentThink?: (step: string, thought: string, tool: string, toolInput: string) => void
   /** 深度思考：工具执行结果 */
@@ -145,6 +147,9 @@ export async function streamChat(
             break
           case 'done':
             handlers.onDone(data.message_id || '', data.title ?? undefined)
+            break
+          case 'context_trimmed':
+            handlers.onContextTrimmed?.(data)
             break
           case 'agent_think':
             handlers.onAgentThink?.(

@@ -79,7 +79,13 @@ async def update_model_config(
             )
         updates[item.key] = item.value
 
-    await mc_update_batch(updates)
+    try:
+        await mc_update_batch(updates)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(e),
+        )
     return {
         "message": "配置已更新，即时生效",
         "updated": list(updates.keys()),

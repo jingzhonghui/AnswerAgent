@@ -43,6 +43,7 @@ MODEL_CONFIG_KEYS = {
 
     # === 聊天设置（热更新） ===
     "history_window": "对话历史保留轮数（每轮 = 1问1答），默认 10",
+    "max_context_chars": "上下文总字符预算上限 K（0=不限制，最大值1000），默认150即150K字符",
 
     # === 路径配置（需重启生效） ===
     "knowledge_path": "知识库根目录路径（⚠️ 需重启生效），默认 ./knowledge",
@@ -94,6 +95,7 @@ def init_from_settings() -> None:
         "deep_temperature": str(settings.deep_temperature),
         # 聊天设置
         "history_window": str(settings.history_window),
+        "max_context_chars": str(settings.max_context_chars),
         # 路径配置
         "knowledge_path": settings.knowledge_path or "./knowledge",
         "data_path": settings.data_path or "./data/conversations",
@@ -174,6 +176,15 @@ async def update(key: str, value: str) -> None:
     global _config_cache
     if key not in MODEL_CONFIG_KEYS:
         raise ValueError(f"未知的配置键: {key}")
+
+    # 范围校验
+    if key == "max_context_chars":
+        try:
+            v = int(value)
+        except (ValueError, TypeError):
+            raise ValueError("max_context_chars 必须是整数")
+        if v < 0 or v > 1000:
+            raise ValueError("max_context_chars 取值范围: 0 ~ 1000（0=不限制，1000=1M字符）")
 
     db_path = settings.db_path
     now = datetime.now(timezone.utc).isoformat()

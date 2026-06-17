@@ -29,6 +29,7 @@ class Settings(BaseSettings):
 
     # Chat settings
     history_window: int = 10  # Number of conversation rounds to keep
+    max_context_chars: int = 150  # 上下文总字符预算上限(K)，0=不限制，150=150K
 
     # Deep thinking (reasoning) model — 完全独立配置，可与默认模型不同 provider
     deep_model_enabled: bool = True

@@ -3,7 +3,7 @@ Pydantic request/response models for AnswerAgent backend.
 """
 from datetime import datetime
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class FileSelection(BaseModel):
@@ -200,6 +200,13 @@ class ModelConfigItem(BaseModel):
     key: str = Field(..., description="配置键")
     value: str = Field(default="", description="配置值")
     description: str = Field(default="", description="配置说明")
+
+    @field_validator('value', mode='before')
+    @classmethod
+    def coerce_value_to_str(cls, v):
+        if v is None:
+            return ""
+        return str(v)
 
 
 class ModelConfigUpdate(BaseModel):

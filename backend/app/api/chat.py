@@ -39,6 +39,8 @@ from core.agent_builder import (
 )
 from core.llm_factory import LLMConfigError, create_chat_llm
 from core.skill_loader import load_skill_files
+from core.context_budget import apply_context_budget
+from core import model_config
 from langchain_core.messages import HumanMessage
 from models.schemas import ChatStreamRequest
 
@@ -328,6 +330,43 @@ async def _stream_events(
             conversation_id, window=settings.history_window
         )
         formatted_history = format_history(history)
+
+        # ── 上下文预算检查 ──
+        max_chars_raw = model_config.get_int("max_context_chars", 0)
+        max_chars = max_chars_raw * 1000 if max_chars_raw > 0 else 0
+        if max_chars > 0:
+            budget_mode = "kb" if context else mode
+            budget_result = apply_context_budget(
+                mode=budget_mode,
+                context=context,
+                history_messages=formatted_history,
+                user_question=message,
+                max_chars=max_chars,
+            )
+            context = budget_result.context
+            formatted_history = budget_result.history
+
+            if budget_result.trimmed:
+                parts = []
+                if budget_result.trimmed_history_rounds > 0:
+                    parts.append(f"{budget_result.trimmed_history_rounds} 轮历史对话已折叠")
+                if budget_result.trimmed_context_chars > 0:
+                    parts.append("部分参考文件已截断")
+                detail = "，".join(parts)
+                notice = f"> 上下文已自动精简（{detail}）。可开启新对话以避免信息丢失。\n\n"
+                full_response += notice
+                yield {
+                    "event": "context_trimmed",
+                    "data": json.dumps(
+                        {
+                            "trimmed_history_rounds": budget_result.trimmed_history_rounds,
+                            "trimmed_context_chars": budget_result.trimmed_context_chars,
+                            "char_used": budget_result.char_used,
+                            "char_budget": budget_result.char_budget,
+                        },
+                        ensure_ascii=False,
+                    ),
+                }
 
         # 知识库已匹配但没有找到相关文件时，先向用户发出提示，再继续通用回答
         kb_fallback = kb_names and not all_loaded and mode != "deep"
