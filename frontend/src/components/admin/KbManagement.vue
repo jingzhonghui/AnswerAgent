@@ -10,8 +10,29 @@ import {
   deleteKbFile,
   downloadKbFile,
   downloadKnowledgeBase,
+  getKbFileContent,
 } from '@/api'
 import type { KbSummary, KbFileInfo } from '@/types'
+import type { KbFileContent } from '@/api'
+
+import hljs from 'highlight.js'
+import MarkdownIt from 'markdown-it'
+
+function _highlightCode(str: string, lang: string): string {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return `<pre class="hljs"><code>${hljs.highlight(str, { language: lang, ignoreIllegals: true }).value}</code></pre>`
+    } catch { /* fall through */ }
+  }
+  const escaped = str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  return `<pre class="hljs"><code>${escaped}</code></pre>`
+}
+
+const md = new MarkdownIt({
+  html: false,
+  linkify: true,
+  highlight: _highlightCode,
+})
 
 // ============================================================
 // Toast 消息
@@ -56,6 +77,66 @@ const newKbName = ref('')
 const uploadZipFile = ref<File | null>(null)
 const uploadZipName = ref('')
 const uploadKbFileTarget = ref<File | null>(null)
+
+// 上传进度
+const uploadZipProgress = ref(0)
+const isUploadingZip = ref(false)
+
+// 文件内容查看
+const viewingFile = ref<KbFileInfo | null>(null)
+const fileContent = ref<KbFileContent | null>(null)
+const isFileContentLoading = ref(false)
+const isFullscreen = ref(false)
+
+const _EXT_LANG_MAP: Record<string, string> = {
+  '.js': 'javascript', '.ts': 'typescript', '.vue': 'vue', '.jsx': 'jsx', '.tsx': 'tsx',
+  '.py': 'python', '.java': 'java', '.c': 'c', '.cpp': 'cpp', '.h': 'c', '.hpp': 'cpp',
+  '.cs': 'csharp', '.go': 'go', '.rs': 'rust', '.rb': 'ruby', '.php': 'php',
+  '.swift': 'swift', '.kt': 'kotlin', '.scala': 'scala',
+  '.sh': 'bash', '.bash': 'bash', '.zsh': 'bash', '.ps1': 'powershell',
+  '.yml': 'yaml', '.yaml': 'yaml', '.json': 'json', '.xml': 'xml', '.toml': 'toml',
+  '.html': 'html', '.css': 'css', '.scss': 'scss', '.less': 'less',
+  '.sql': 'sql', '.graphql': 'graphql',
+  '.ini': 'ini', '.cfg': 'ini', '.dockerfile': 'dockerfile',
+  '.md': 'markdown',
+}
+
+/** 文件预览渲染方式：'markdown' | 'highlight' | 'plain' */
+const previewRenderMode = computed(() => {
+  if (!viewingFile.value) return 'plain'
+  const ext = viewingFile.value.extension.toLowerCase()
+  if (ext === '.md') return 'markdown'
+  if (ext in _EXT_LANG_MAP) return 'highlight'
+  return 'plain'
+})
+
+/** markdown 渲染后的 HTML */
+const markdownHtml = computed(() => {
+  if (previewRenderMode.value !== 'markdown' || !fileContent.value?.content) return ''
+  return md.render(fileContent.value.content)
+})
+
+/** highlight.js 高亮后的 HTML */
+const highlightHtml = computed(() => {
+  if (previewRenderMode.value !== 'highlight' || !fileContent.value?.content || !viewingFile.value) return ''
+  const lang = _EXT_LANG_MAP[viewingFile.value.extension.toLowerCase()] || ''
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(fileContent.value.content, { language: lang, ignoreIllegals: true }).value
+    } catch { /* fall through */ }
+  }
+  return ''
+})
+
+function toggleFullscreen() {
+  isFullscreen.value = !isFullscreen.value
+}
+
+function closeFileViewer() {
+  viewingFile.value = null
+  fileContent.value = null
+  isFullscreen.value = false
+}
 
 // ============================================================
 // 面包屑
@@ -151,18 +232,27 @@ async function handleUploadZip() {
     showToast('error', '请选择 ZIP 文件')
     return
   }
+  isUploadingZip.value = true
+  uploadZipProgress.value = 0
   try {
-    const res = await uploadKbZip(uploadZipFile.value, uploadZipName.value.trim() || undefined)
+    const res = await uploadKbZip(
+      uploadZipFile.value,
+      uploadZipName.value.trim() || undefined,
+      (pct) => { uploadZipProgress.value = pct },
+    )
     showToast('success', `知识库 "${res.name}" 已从 ZIP 创建（${res.file_count} 个文件）`)
     showUploadZipModal.value = false
     uploadZipFile.value = null
     uploadZipName.value = ''
+    uploadZipProgress.value = 0
     await loadList()
     selectedKb.value = res.name
     currentPath.value = ''
     await loadDir('')
   } catch (e: any) {
     showToast('error', e?.response?.data?.detail || '上传 ZIP 失败')
+  } finally {
+    isUploadingZip.value = false
   }
 }
 
@@ -211,6 +301,21 @@ async function handleDeleteItem(item: KbFileInfo) {
     await loadDir(currentPath.value)
   } catch (e: any) {
     showToast('error', e?.response?.data?.detail || '删除失败')
+  }
+}
+
+async function handleViewFile(item: KbFileInfo) {
+  if (!selectedKb.value || item.is_dir) return
+  viewingFile.value = item
+  fileContent.value = null
+  isFileContentLoading.value = true
+  try {
+    fileContent.value = await getKbFileContent(selectedKb.value, item.rel_path)
+  } catch (e: any) {
+    showToast('error', e?.response?.data?.detail || '读取文件内容失败')
+    viewingFile.value = null
+  } finally {
+    isFileContentLoading.value = false
   }
 }
 
@@ -313,7 +418,7 @@ onMounted(() => {
             🎲 新建知识库
           </button>
           <button class="btn btn-accent" @click="showUploadZipModal = true">
-            📦 上传 ZIP
+            📦 上传压缩包
           </button>
         </div>
       </aside>
@@ -391,6 +496,17 @@ onMounted(() => {
                   <div class="action-group">
                     <button
                       v-if="!item.is_dir"
+                      class="btn-view"
+                      title="查看文件内容"
+                      @click="handleViewFile(item)"
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                    </button>
+                    <button
+                      v-if="!item.is_dir"
                       class="btn-download"
                       title="下载文件"
                       @click="handleDownloadFile(item)"
@@ -427,8 +543,61 @@ onMounted(() => {
       </main>
 
       <!-- ============================================================ -->
-      <!-- 弹窗：新建知识库 -->
+      <!-- 文件内容预览面板（支持全屏 + 语法高亮 + Markdown 渲染） -->
       <!-- ============================================================ -->
+      <div v-if="viewingFile" class="modal-overlay" @click.self="closeFileViewer">
+        <div
+          class="modal-card file-preview-card"
+          :class="{ 'file-preview-fullscreen': isFullscreen }"
+        >
+          <div class="detail-header">
+            <h4>📄 {{ viewingFile.name }}</h4>
+            <div class="detail-header-actions">
+              <button class="btn-icon" :title="isFullscreen ? '退出全屏' : '全屏'" @click="toggleFullscreen">
+                <svg v-if="isFullscreen" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="4 14 10 14 10 20" /><polyline points="20 10 14 10 14 4" /><line x1="14" y1="10" x2="21" y2="3" /><line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+                <svg v-else width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <polyline points="15 3 21 3 21 9" /><polyline points="9 21 3 21 3 15" /><line x1="21" y1="3" x2="14" y2="10" /><line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              </button>
+              <button class="btn-icon" title="关闭" @click="closeFileViewer">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                </svg>
+              </button>
+            </div>
+          </div>
+          <div class="detail-meta">
+            <span>路径: {{ viewingFile.rel_path }}</span>
+            <span>大小: {{ formatSize(viewingFile.size) }}</span>
+            <span>修改时间: {{ formatTime(viewingFile.modified) }}</span>
+            <span v-if="previewRenderMode === 'markdown'" class="render-badge">Markdown</span>
+            <span v-else-if="previewRenderMode === 'highlight'" class="render-badge">Syntax {{ (_EXT_LANG_MAP[viewingFile.extension.toLowerCase()] || '').toUpperCase() }}</span>
+          </div>
+          <div class="file-content-area">
+            <div v-if="isFileContentLoading" class="kb-loading">加载中…</div>
+            <div v-else-if="!fileContent" class="kb-placeholder" style="padding: 32px 0;">
+              <p>无法加载文件内容</p>
+            </div>
+            <div v-else-if="fileContent.message && fileContent.content === null" class="kb-placeholder" style="padding: 32px 0;">
+              <p>{{ fileContent.message }}</p>
+            </div>
+            <!-- Markdown 渲染 -->
+            <div v-else-if="previewRenderMode === 'markdown'" class="markdown-body" v-html="markdownHtml"></div>
+            <!-- 语法高亮 -->
+            <div v-else-if="previewRenderMode === 'highlight'" class="hljs-wrapper">
+              <pre><code class="hljs" v-html="highlightHtml"></code></pre>
+            </div>
+            <!-- 纯文本 -->
+            <pre v-else class="file-content-text">{{ fileContent.content }}</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============================================================
+          弹窗：新建知识库
+          ============================================================ -->
       <div v-if="showCreateModal" class="modal-overlay" @click.self="showCreateModal = false">
         <div class="modal-card">
           <h4>🎲 新建知识库</h4>
@@ -451,19 +620,25 @@ onMounted(() => {
       <!-- ============================================================ -->
       <div v-if="showUploadZipModal" class="modal-overlay" @click.self="showUploadZipModal = false">
         <div class="modal-card">
-          <h4>📦 上传 ZIP 创建知识库</h4>
-          <label class="form-label">选择 ZIP 文件</label>
-          <input type="file" accept=".zip" class="form-input" @change="onZipFileChange" />
+          <h4>📦 上传压缩包创建知识库</h4>
+          <label class="form-label">选择压缩包（.zip / .tar.gz / .7z）</label>
+          <input type="file" accept=".zip,.tar.gz,.tgz,.7z" class="form-input" @change="onZipFileChange" :disabled="isUploadingZip" />
           <label class="form-label">知识库名称（可选，默认使用文件名）</label>
           <input
             v-model="uploadZipName"
             class="form-input"
-            placeholder="留空则使用 ZIP 文件名"
+            placeholder="留空则使用压缩包名称"
+            :disabled="isUploadingZip"
           />
+          <!-- 进度条 -->
+          <div v-if="isUploadingZip" class="upload-progress">
+            <div class="upload-progress-bar" :style="{ width: uploadZipProgress + '%' }"></div>
+            <span class="upload-progress-text">{{ uploadZipProgress }}%</span>
+          </div>
           <div class="modal-actions">
-            <button class="btn btn-secondary" @click="showUploadZipModal = false">取消</button>
-            <button class="btn btn-primary" :disabled="!uploadZipFile" @click="handleUploadZip">
-              上传并解压
+            <button class="btn btn-secondary" :disabled="isUploadingZip" @click="showUploadZipModal = false">取消</button>
+            <button class="btn btn-primary" :disabled="!uploadZipFile || isUploadingZip" @click="handleUploadZip">
+              {{ isUploadingZip ? '上传中…' : '上传并解压' }}
             </button>
           </div>
         </div>
@@ -543,6 +718,26 @@ onMounted(() => {
     </div>
   </div>
 </template>
+
+<style>
+/* 全局样式：highlight.js 主题 */
+@import 'highlight.js/styles/github.css';
+
+[data-theme="dark"] .hljs {
+  background: #1e1e2e;
+  color: #cdd6f4;
+}
+[data-theme="dark"] .hljs-keyword { color: #cba6f7; }
+[data-theme="dark"] .hljs-string { color: #a6e3a1; }
+[data-theme="dark"] .hljs-number { color: #fab387; }
+[data-theme="dark"] .hljs-comment { color: #6c7086; }
+[data-theme="dark"] .hljs-title { color: #89b4fa; }
+[data-theme="dark"] .hljs-built_in { color: #f38ba8; }
+[data-theme="dark"] .hljs-attr { color: #89dceb; }
+[data-theme="dark"] .hljs-params { color: #f5c2e7; }
+[data-theme="dark"] .hljs-literal { color: #fab387; }
+[data-theme="dark"] .hljs-type { color: #f9e2af; }
+</style>
 
 <style scoped>
 /* ============================================================
@@ -1113,11 +1308,258 @@ onMounted(() => {
 /* ============================================================
    暗色模式
    ============================================================ */
+/* ============================================================
+   文件内容预览
+   ============================================================ */
+.file-preview-card {
+  width: 780px;
+  max-width: 92vw;
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.file-preview-card .detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.file-preview-card .detail-header h4 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.file-preview-card .btn-close {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 14px;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.file-preview-card .btn-close:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.file-preview-card .detail-meta {
+  display: flex;
+  gap: 20px;
+  padding: 10px 20px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  flex-wrap: wrap;
+}
+
+.file-content-area {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  min-height: 200px;
+}
+
+.file-content-text {
+  margin: 0;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-all;
+  tab-size: 2;
+}
+
+/* 全屏模式 */
+.file-preview-fullscreen {
+  width: 96vw !important;
+  max-width: 96vw !important;
+  height: 94vh !important;
+  max-height: 94vh !important;
+}
+
+.file-preview-fullscreen .file-content-area {
+  flex: 1;
+  overflow: auto;
+}
+
+/* 头部操作按钮组 */
+.detail-header-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.btn-icon {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-icon:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+/* 渲染方式标签 */
+.render-badge {
+  font-size: 11px;
+  padding: 1px 8px;
+  border-radius: 8px;
+  background: var(--accent-color);
+  color: #fff;
+  font-weight: 500;
+}
+
+/* 语法高亮包装器 */
+.hljs-wrapper {
+  margin: 0;
+}
+
+.hljs-wrapper pre {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: var(--radius-sm);
+  overflow-x: auto;
+  background: #f6f8fa;
+}
+
+[data-theme="dark"] .hljs-wrapper pre {
+  background: #1e1e2e;
+}
+
+.hljs-wrapper code {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 12px;
+  line-height: 1.6;
+  tab-size: 2;
+}
+
+/* Markdown 渲染 */
+.markdown-body {
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--text-primary);
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin: 20px 0 10px;
+  font-weight: 600;
+  line-height: 1.3;
+}
+.markdown-body h1 { font-size: 22px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px; }
+.markdown-body h2 { font-size: 18px; border-bottom: 1px solid var(--border-color); padding-bottom: 6px; }
+.markdown-body h3 { font-size: 16px; }
+.markdown-body p { margin: 0 0 12px; }
+.markdown-body ul, .markdown-body ol { margin: 0 0 12px; padding-left: 24px; }
+.markdown-body li { margin: 4px 0; }
+.markdown-body blockquote {
+  margin: 0 0 12px;
+  padding: 4px 14px;
+  border-left: 4px solid var(--accent-color);
+  color: var(--text-secondary);
+  background: var(--bg-sidebar);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+}
+.markdown-body code:not(.hljs) {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--bg-sidebar);
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+  font-size: 0.9em;
+  color: var(--accent-color);
+}
+.markdown-body pre { margin: 0 0 12px; border-radius: var(--radius-sm); overflow-x: auto; }
+.markdown-body pre code { background: none; padding: 0; color: inherit; }
+.markdown-body table { border-collapse: collapse; width: 100%; margin: 0 0 12px; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--border-color); padding: 6px 12px; text-align: left; }
+.markdown-body th { background: var(--bg-sidebar); font-weight: 600; }
+.markdown-body hr { border: none; border-top: 1px solid var(--border-color); margin: 20px 0; }
+.markdown-body a { color: var(--accent-color); }
+.markdown-body a:hover { text-decoration: underline; }
+.markdown-body img { max-width: 100%; }
+
+
+/* 查看按钮 */
+.btn-view {
+  background: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 4px;
+  color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.btn-view:hover {
+  background: rgba(78, 110, 242, 0.1);
+  border-color: rgba(78, 110, 242, 0.3);
+  color: var(--accent-color);
+}
+
 [data-theme="dark"] .kb-file-table tr:hover td {
   background: var(--bg-sidebar);
 }
 
 [data-theme="dark"] .breadcrumb-bar {
   background: var(--bg-sidebar);
+}
+
+/* ============================================================
+   上传进度条
+   ============================================================ */
+.upload-progress {
+  margin-top: 12px;
+  height: 24px;
+  background: var(--bg-sidebar);
+  border-radius: var(--radius-sm);
+  position: relative;
+  overflow: hidden;
+}
+
+.upload-progress-bar {
+  height: 100%;
+  background: var(--accent-color);
+  border-radius: var(--radius-sm);
+  transition: width 0.3s ease;
+}
+
+.upload-progress-text {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
 </style>

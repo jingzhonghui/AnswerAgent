@@ -6,10 +6,12 @@
 """
 import os
 import shutil
+import tarfile
 import tempfile
 import zipfile
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from fastapi.responses import FileResponse
@@ -225,14 +227,18 @@ async def upload_kb_zip(
     name: str = Form(""),
     admin: dict = Depends(get_current_admin_user),
 ):
-    """上传 ZIP 压缩包解压创建知识库"""
+    """上传压缩包解压创建知识库（支持 .zip / .tar.gz / .7z）"""
     # 确定知识库名称
     if name and name.strip():
         kb_name = _validate_kb_name(name)
     else:
-        # 使用文件名（去掉 .zip 后缀）
         raw = file.filename or "unknown"
-        kb_name = _validate_kb_name(raw.removesuffix(".zip"))
+        # 去掉常见的压缩包后缀
+        for ext in (".tar.gz", ".tgz", ".tar", ".zip", ".7z"):
+            if raw.lower().endswith(ext):
+                raw = raw[: -len(ext)]
+                break
+        kb_name = _validate_kb_name(raw)
 
     root = settings.get_knowledge_path()
     kb_path = _safe_resolve_in_kb(root, root / kb_name)
@@ -242,12 +248,10 @@ async def upload_kb_zip(
             detail=f"知识库 '{kb_name}' 已存在",
         )
 
-    # 先存到临时文件
-    with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp:
+    # 流式写入临时文件，避免大文件撑爆内存
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".archive") as tmp:
         try:
-            content = await file.read()
-            tmp.write(content)
-            tmp.flush()
+            shutil.copyfileobj(file.file, tmp)
             tmp_path = tmp.name
         except Exception:
             os.unlink(tmp.name)
@@ -256,37 +260,7 @@ async def upload_kb_zip(
     file_count = 0
     try:
         kb_path.mkdir(parents=True)
-        with _open_zip_with_encoding(tmp_path) as zf:
-            for entry in zf.infolist():
-                # 跳过目录
-                if entry.is_dir():
-                    continue
-                entry_name = entry.filename.replace("\\", "/")
-                parts = entry_name.split("/")
-
-                # 跳过隐藏文件和隐藏目录下的文件
-                if any(p.startswith(".") for p in parts):
-                    continue
-
-                # 跳过空文件名
-                if not parts[-1]:
-                    continue
-
-                # 路径穿越校验
-                target = kb_path / entry_name
-                try:
-                    target = _safe_resolve_in_kb(kb_path, target)
-                except PathSecurityError:
-                    continue  # 跳过不安全条目
-
-                # 确保父目录存在
-                target.parent.mkdir(parents=True, exist_ok=True)
-
-                # 解压文件
-                with zf.open(entry) as src, open(target, "wb") as dst:
-                    dst.write(src.read())
-
-                file_count += 1
+        file_count = _extract_archive_to_kb(tmp_path, kb_path)
     finally:
         os.unlink(tmp_path)
 
@@ -295,6 +269,112 @@ async def upload_kb_zip(
         "file_count": file_count,
         "message": "知识库已从压缩包创建",
     }
+
+
+# ---------------------------------------------------------------------------
+# 压缩包格式检测与解压
+# ---------------------------------------------------------------------------
+
+_MAX_FILE_SIZE = 200 * 1024 * 1024  # 200MB
+_MAX_FILE_COUNT = 10000
+
+
+def _detect_archive_fmt(path: str) -> str:
+    """检测压缩包格式，返回 'zip' / 'tar' / '7z'"""
+    with open(path, "rb") as f:
+        header = f.read(6)
+    if header[:2] == b"PK":
+        return "zip"
+    if header[:2] == b"\x1f\x8b":
+        return "tar"
+    if header[:6] == b"7z\xbc\xaf\x27\x1c":
+        return "7z"
+    raise ValueError("无法识别的压缩包格式")
+
+
+def _should_skip_file(filename: str) -> bool:
+    """检查是否需要跳过（隐藏文件/空文件名）"""
+    parts = filename.replace("\\", "/").split("/")
+    if any(p.startswith(".") for p in parts):
+        return True
+    if not parts[-1]:
+        return True
+    return False
+
+
+def _safe_target(kb_path: Path, filename: str) -> Optional[Path]:
+    """路径穿越检查，通过则返回 resolved Path，否则返回 None"""
+    target = kb_path / filename.replace("\\", "/")
+    try:
+        return _safe_resolve_in_kb(kb_path, target)
+    except PathSecurityError:
+        return None
+
+
+def _extract_archive_to_kb(archive_path: str, kb_path: Path) -> int:
+    """将压缩包解压到知识库目录，返回解压文件数"""
+    fmt = _detect_archive_fmt(archive_path)
+    file_count = 0
+
+    if fmt == "zip":
+        with _open_zip_with_encoding(archive_path) as zf:
+            entries = zf.infolist()
+            if len(entries) > _MAX_FILE_COUNT:
+                raise ValueError(f"压缩包文件数 {len(entries)} 超过上限 {_MAX_FILE_COUNT}")
+            for entry in entries:
+                if entry.is_dir() or _should_skip_file(entry.filename):
+                    continue
+                if entry.file_size > _MAX_FILE_SIZE:
+                    raise ValueError(f"文件 {entry.filename} 大小超过上限")
+                target = _safe_target(kb_path, entry.filename)
+                if target is None:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with zf.open(entry) as src, open(target, "wb") as dst:
+                    dst.write(src.read())
+                file_count += 1
+
+    elif fmt == "tar":
+        with tarfile.open(archive_path, "r:*") as tf:
+            members = tf.getmembers()
+            if len(members) > _MAX_FILE_COUNT:
+                raise ValueError(f"压缩包文件数 {len(members)} 超过上限 {_MAX_FILE_COUNT}")
+            for member in members:
+                if member.isdir() or _should_skip_file(member.name):
+                    continue
+                if member.size > _MAX_FILE_SIZE:
+                    raise ValueError(f"文件 {member.name} 大小超过上限")
+                target = _safe_target(kb_path, member.name)
+                if target is None:
+                    continue
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with tf.extractfile(member) as src, open(target, "wb") as dst:
+                    dst.write(src.read())
+                file_count += 1
+
+    elif fmt == "7z":
+        import py7zr
+
+        with py7zr.SevenZipFile(archive_path, mode="r") as sz:
+            entries = sz.list()
+            if len(entries) > _MAX_FILE_COUNT:
+                raise ValueError(f"压缩包文件数 {len(entries)} 超过上限 {_MAX_FILE_COUNT}")
+            valid_filenames: list[str] = []
+            for info in entries:
+                name = info.filename.replace("\\", "/")
+                if info.is_directory or _should_skip_file(name):
+                    continue
+                if info.file_size > _MAX_FILE_SIZE:
+                    raise ValueError(f"文件 {name} 大小超过上限")
+                target = _safe_target(kb_path, name)
+                if target is None:
+                    continue
+                valid_filenames.append(name)
+                file_count += 1
+            if valid_filenames:
+                sz.extract(path=str(kb_path), targets=valid_filenames)
+
+    return file_count
 
 
 @router.delete("/{kb_name}")
@@ -478,3 +558,62 @@ async def download_knowledge_base(
     except Exception:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
+
+
+# ---------------------------------------------------------------------------
+# 文件内容预览端点
+# ---------------------------------------------------------------------------
+
+_MAX_PREVIEW_SIZE = 1024 * 1024  # 1MB
+
+
+@router.get("/{kb_name}/files/content")
+async def get_kb_file_content(
+    kb_name: str,
+    file_path: str = Query(..., description="文件相对路径"),
+    admin: dict = Depends(get_current_admin_user),
+):
+    """读取知识库文件内容（纯文本预览，限 1MB）"""
+    root = settings.get_knowledge_path()
+    kb_path = _safe_resolve_in_kb(root, root / kb_name)
+    if not kb_path.exists() or not kb_path.is_dir():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"知识库 '{kb_name}' 不存在",
+        )
+
+    target = _safe_resolve_in_kb(kb_path, kb_path / file_path)
+    if not target.exists() or not target.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"文件 '{file_path}' 不存在",
+        )
+
+    file_size = target.stat().st_size
+    if file_size > _MAX_PREVIEW_SIZE:
+        return {
+            "content": None,
+            "truncated": True,
+            "size": file_size,
+            "message": f"文件过大（{file_size} bytes），仅支持预览 1MB 以内的文件",
+        }
+
+    # 尝试以文本方式读取
+    try:
+        content = target.read_text(encoding="utf-8")
+    except (UnicodeDecodeError, LookupError):
+        try:
+            content = target.read_text(encoding="gbk")
+        except (UnicodeDecodeError, LookupError):
+            return {
+                "content": None,
+                "truncated": False,
+                "size": file_size,
+                "message": "无法以文本方式预览该文件（可能是二进制文件）",
+            }
+
+    return {
+        "content": content,
+        "truncated": False,
+        "size": file_size,
+    }

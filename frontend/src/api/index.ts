@@ -411,14 +411,23 @@ export async function createKnowledgeBase(payload: CreateKbRequest): Promise<{ n
   return data
 }
 
-/** 上传 ZIP 创建知识库 */
-export async function uploadKbZip(file: File, name?: string): Promise<{ name: string; file_count: number; message: string }> {
+/** 上传 ZIP 创建知识库（支持上传进度回调） */
+export async function uploadKbZip(
+  file: File,
+  name?: string,
+  onProgress?: (percent: number) => void,
+): Promise<{ name: string; file_count: number; message: string }> {
   const form = new FormData()
   form.append('file', file)
   if (name) form.append('name', name)
   const { data } = await api.post('/admin/knowledge-bases/upload', form, {
     headers: { 'Content-Type': 'multipart/form-data' },
     timeout: 120000,
+    onUploadProgress: (e) => {
+      if (onProgress && e.total) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    },
   })
   return data
 }
@@ -483,6 +492,22 @@ export async function downloadKnowledgeBase(kbName: string): Promise<void> {
   a.click()
   document.body.removeChild(a)
   URL.revokeObjectURL(url)
+}
+
+/** 知识库文件内容预览 */
+export interface KbFileContent {
+  content: string | null
+  truncated: boolean
+  size: number
+  message?: string
+}
+
+export async function getKbFileContent(kbName: string, filePath: string): Promise<KbFileContent> {
+  const { data } = await api.get(
+    `/admin/knowledge-bases/${encodeURIComponent(kbName)}/files/content`,
+    { params: { file_path: filePath } },
+  )
+  return data
 }
 
 export default api

@@ -13,3 +13,4 @@ pyjwt[crypto]
 bcrypt>=4.0.0
 aiosqlite
 python-multipart
+py7zr>=0.22.0
